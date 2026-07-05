@@ -7,3 +7,5 @@ export * from './map/dust2.js';
 export * from './map/registry.js';
 export * from './sim/collision.js';
 export * from './sim/movement.js';
+export * from './sim/input.js';
+export * from './net/protocol.js';

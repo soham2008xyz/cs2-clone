@@ -1,127 +1,170 @@
 import Phaser from 'phaser';
 import {
-  CH,
+  BTN,
   getMap,
-  stepMovement,
-  TICK_DT,
+  PFLAG,
   TICK_MS,
   TILE_SIZE,
   type CompiledMap,
-  type Vec2,
+  type RosterEntry,
+  type TeamId,
 } from '@cs2d/shared';
 import { playerTexture } from './BootScene.js';
-import { TILE_INDEX } from '../textures.js';
+import { Connection, serverUrl } from '../net/connection.js';
+import { Predictor } from '../net/prediction.js';
+import { SnapshotBuffer } from '../net/interpolation.js';
+import { renderMap } from '../render/mapRender.js';
 
-const CHAR_TO_TILE: Record<string, number> = {
-  [CH.WALL]: TILE_INDEX.WALL,
-  [CH.BOX]: TILE_INDEX.BOX,
-  [CH.FLOOR]: TILE_INDEX.FLOOR,
-  [CH.SITE_A]: TILE_INDEX.SITE_A,
-  [CH.SITE_B]: TILE_INDEX.SITE_B,
-  [CH.T_SPAWN]: TILE_INDEX.FLOOR,
-  [CH.CT_SPAWN]: TILE_INDEX.FLOOR,
-};
+interface Entity {
+  sprite: Phaser.GameObjects.Sprite;
+  label: Phaser.GameObjects.Text;
+  team: TeamId;
+}
 
-/**
- * Phase 1: local single-player walkabout. The same fixed-timestep loop and
- * shared stepMovement() later become the client-side prediction path.
- */
 export class GameScene extends Phaser.Scene {
   private map!: CompiledMap;
-  private player!: Phaser.GameObjects.Sprite;
-  private pos: Vec2 = { x: 0, y: 0 };
+  private conn = new Connection();
+  private predictor!: Predictor;
+  private buffer = new SnapshotBuffer();
+  private myId = -1;
+  private myTeam: TeamId = 'T';
+  private spawned = false;
+  private roster = new Map<number, RosterEntry>();
+  private entities = new Map<number, Entity>();
   private keys!: Record<'W' | 'A' | 'S' | 'D' | 'SHIFT', Phaser.Input.Keyboard.Key>;
   private accumulator = 0;
-  private debugText!: Phaser.GameObjects.Text;
+  private statusText!: Phaser.GameObjects.Text;
 
   constructor() {
     super('Game');
   }
 
   create(): void {
+    (window as unknown as { __scene: GameScene }).__scene = this; // debug/testing handle
     this.map = getMap('dust2');
-
-    // tilemap from shared map data
-    const data: number[][] = [];
-    for (let ty = 0; ty < this.map.height; ty++) {
-      const row: number[] = [];
-      for (let tx = 0; tx < this.map.width; tx++) {
-        row.push(CHAR_TO_TILE[this.map.charAt(tx, ty)] ?? TILE_INDEX.FLOOR);
-      }
-      data.push(row);
-    }
-    const tilemap = this.make.tilemap({ data, tileWidth: TILE_SIZE, tileHeight: TILE_SIZE });
-    const tileset = tilemap.addTilesetImage('tiles', 'tiles', TILE_SIZE, TILE_SIZE, 0, 0)!;
-    tilemap.createLayer(0, tileset, 0, 0);
-
-    // bombsite letters
-    for (const site of ['A', 'B'] as const) {
-      const c = this.map.siteCenters[site];
-      this.add
-        .text(c.x, c.y, site, { fontFamily: 'Arial Black', fontSize: '48px', color: '#7a2e1d' })
-        .setOrigin(0.5)
-        .setAlpha(0.5);
-    }
-
-    // player
-    this.pos = { ...this.map.spawns.T[0] };
-    this.player = this.add.sprite(this.pos.x, this.pos.y, playerTexture(this, 'T'));
+    this.predictor = new Predictor(this.map);
+    renderMap(this, this.map);
 
     this.cameras.main.setBounds(0, 0, this.map.widthPx, this.map.heightPx);
-    this.cameras.main.startFollow(this.player, true, 0.15, 0.15);
     this.cameras.main.setZoom(1.25);
+    this.cameras.main.centerOn(this.map.widthPx / 2, this.map.heightPx / 2);
 
     this.keys = this.input.keyboard!.addKeys('W,A,S,D,SHIFT') as GameScene['keys'];
 
-    this.debugText = this.add
-      .text(8, 8, '', { fontFamily: 'monospace', fontSize: '13px', color: '#ffffff' })
-      .setScrollFactor(0)
-      .setDepth(100)
-      .setShadow(1, 1, '#000', 2);
+    this.statusText = this.add
+      .text(this.map.widthPx / 2, this.map.heightPx / 2, 'connecting…', {
+        fontFamily: 'monospace',
+        fontSize: '20px',
+        color: '#ffffff',
+        backgroundColor: '#00000088',
+        padding: { x: 12, y: 8 },
+      })
+      .setOrigin(0.5)
+      .setDepth(200);
+
+    this.conn.onWelcome = (msg) => {
+      this.myId = msg.id;
+      this.statusText.setVisible(false);
+    };
+    this.conn.onRoster = (msg) => this.applyRoster(msg.players);
+    this.conn.onSnapshot = (msg) => {
+      this.buffer.push(msg);
+      const self = msg.p.find(([id]) => id === this.myId);
+      if (self) {
+        const alive = (self[5] & PFLAG.ALIVE) !== 0;
+        if (!this.spawned) {
+          this.predictor.pos = { x: self[1], y: self[2] };
+          this.spawned = true;
+        } else {
+          this.predictor.reconcile({ x: self[1], y: self[2] }, msg.a, alive);
+        }
+      }
+    };
+    this.conn.onClose = () => {
+      this.statusText.setText('disconnected — is the server running?  (npm run dev:server)').setVisible(true);
+    };
+
+    const name = new URLSearchParams(location.search).get('name') ?? `Player${Math.floor(Math.random() * 1000)}`;
+    this.conn
+      .connect(serverUrl())
+      .then(() => this.conn.send({ t: 'join', name }))
+      .catch(() => {
+        this.statusText.setText('cannot reach server — start it with: npm run dev:server').setVisible(true);
+      });
   }
 
-  private nearestCallout(): string {
-    let best = '';
-    let bestD = Infinity;
-    for (const c of this.map.def.callouts) {
-      const d = Math.hypot((c.tx + 0.5) * TILE_SIZE - this.pos.x, (c.ty + 0.5) * TILE_SIZE - this.pos.y);
-      if (d < bestD) {
-        bestD = d;
-        best = c.name;
+  private applyRoster(entries: RosterEntry[]): void {
+    this.roster = new Map(entries.map((e) => [e.id, e]));
+    if (this.roster.has(this.myId)) this.myTeam = this.roster.get(this.myId)!.team;
+    // remove entities for departed players
+    for (const [id, e] of this.entities) {
+      if (!this.roster.has(id)) {
+        e.sprite.destroy();
+        e.label.destroy();
+        this.entities.delete(id);
       }
     }
-    return best;
+  }
+
+  private ensureEntity(id: number): Entity | null {
+    let e = this.entities.get(id);
+    if (e) return e;
+    const info = this.roster.get(id);
+    if (!info) return null;
+    const sprite = this.add.sprite(-100, -100, playerTexture(this, info.team));
+    const label = this.add
+      .text(-100, -100, info.name, { fontFamily: 'monospace', fontSize: '11px', color: '#ffffffcc' })
+      .setOrigin(0.5, 1.6)
+      .setShadow(1, 1, '#000', 2);
+    e = { sprite, label, team: info.team };
+    this.entities.set(id, e);
+    return e;
   }
 
   update(_time: number, deltaMs: number): void {
-    // fixed-timestep simulation (same cadence the server runs)
+    if (this.myId === -1 || !this.spawned) return;
+
+    // fixed-step input → predict locally → send to server
     this.accumulator += Math.min(deltaMs, 250);
     while (this.accumulator >= TICK_MS) {
       this.accumulator -= TICK_MS;
-      this.pos = stepMovement(
-        this.pos,
-        {
-          up: this.keys.W.isDown,
-          down: this.keys.S.isDown,
-          left: this.keys.A.isDown,
-          right: this.keys.D.isDown,
-          walk: this.keys.SHIFT.isDown,
-        },
-        1,
-        this.map,
-        TICK_DT,
-      );
+      const pointer = this.input.activePointer;
+      const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+      const aim = Math.atan2(world.y - this.predictor.pos.y, world.x - this.predictor.pos.x);
+      let buttons = 0;
+      if (this.keys.W.isDown) buttons |= BTN.UP;
+      if (this.keys.S.isDown) buttons |= BTN.DOWN;
+      if (this.keys.A.isDown) buttons |= BTN.LEFT;
+      if (this.keys.D.isDown) buttons |= BTN.RIGHT;
+      if (this.keys.SHIFT.isDown) buttons |= BTN.WALK;
+      const input = this.predictor.buildInput(buttons, aim);
+      this.predictor.applyLocal(input, true);
+      this.conn.send(input);
     }
 
-    this.player.setPosition(this.pos.x, this.pos.y);
+    // own entity: predicted position, instant aim
+    const me = this.ensureEntity(this.myId);
+    if (me) {
+      me.sprite.setPosition(this.predictor.pos.x, this.predictor.pos.y);
+      const pointer = this.input.activePointer;
+      const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+      me.sprite.setRotation(Math.atan2(world.y - this.predictor.pos.y, world.x - this.predictor.pos.x));
+      me.label.setPosition(this.predictor.pos.x, this.predictor.pos.y);
+      if (!this.cameras.main.deadzone) this.cameras.main.startFollow(me.sprite, true, 0.15, 0.15);
+    }
 
-    // aim at pointer
-    const pointer = this.input.activePointer;
-    const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
-    this.player.setRotation(Math.atan2(world.y - this.pos.y, world.x - this.pos.x));
-
-    this.debugText.setText(
-      `${this.nearestCallout()}  (${Math.round(this.pos.x)}, ${Math.round(this.pos.y)})  fps ${Math.round(this.game.loop.actualFps)}`,
-    );
+    // remote entities: interpolated
+    const sampled = this.buffer.sample();
+    for (const [id, state] of sampled) {
+      if (id === this.myId) continue;
+      const e = this.ensureEntity(id);
+      if (!e) continue;
+      const alive = (state.flags & PFLAG.ALIVE) !== 0;
+      e.sprite.setVisible(alive);
+      e.label.setVisible(alive);
+      e.sprite.setPosition(state.x, state.y);
+      e.sprite.setRotation(state.aim);
+      e.label.setPosition(state.x, state.y);
+    }
   }
 }
