@@ -1,0 +1,16 @@
+{
+  "name": "cs2d",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:server": "npm run dev -w @cs2d/server",
+    "dev:client": "npm run dev -w @cs2d/client",
+    "build": "npm run build -w @cs2d/client && npm run build -w @cs2d/server",
+    "test": "npm run test -w @cs2d/shared",
+    "start": "npm run start -w @cs2d/server"
+  }
+}

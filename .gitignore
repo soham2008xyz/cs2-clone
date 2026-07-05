@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.assets-tmp/
+*.log
+.DS_Store
+.remember/
+.claude/settings.local.json
