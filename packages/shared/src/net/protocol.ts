@@ -19,6 +19,7 @@ export interface InputMsg {
   b: number; // BTN bitmask
   a: number; // aim angle (radians)
   w?: number; // switch to slot (1=primary 2=secondary 3=knife 4=grenade cycle)
+  k?: number; // latest server tick the client has seen (drives lag compensation)
 }
 
 export interface JoinMsg {
@@ -36,8 +37,8 @@ export type ClientMsg = JoinMsg | InputMsg | BuyMsg;
 
 // ── Server → client ──────────────────────────────────────────────────────────
 
-/** Per-player snapshot tuple: [id, x, y, aim, hp, flags] */
-export type PlayerSnap = [number, number, number, number, number, number];
+/** Per-player snapshot tuple: [id, x, y, aim, hp, flags, weaponId] */
+export type PlayerSnap = [number, number, number, number, number, number, string];
 
 export const PFLAG = {
   ALIVE: 1,
@@ -45,13 +46,33 @@ export const PFLAG = {
   PLANTING: 4,
   DEFUSING: 8,
   HAS_BOMB: 16,
+  RELOADING: 32,
 } as const;
+
+/** Private fields for the receiving client's own player. */
+export interface SelfState {
+  ammo: number;
+  reserve: number;
+  armor: number;
+  money: number;
+  slot: number; // 1 primary, 2 secondary, 3 knife
+  weapon: string;
+  reload: number; // ticks until reload completes (0 = not reloading)
+}
+
+export type GameEvent =
+  | { e: 'shot'; id: number; x: number; y: number; tx: number; ty: number; w: string }
+  | { e: 'hit'; id: number; target: number; d: number } // shooter feedback
+  | { e: 'hurt'; d: number; from: number } // victim feedback (only sent to victim)
+  | { e: 'kill'; k: number; v: number; w: string };
 
 export interface SnapshotMsg {
   t: 's';
   k: number; // server tick
   a: number; // last processed input seq for the receiving client
   p: PlayerSnap[];
+  me?: SelfState;
+  ev?: GameEvent[];
 }
 
 export interface RosterEntry {

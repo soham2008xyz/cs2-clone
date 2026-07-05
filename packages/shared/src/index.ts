@@ -8,4 +8,7 @@ export * from './map/registry.js';
 export * from './sim/collision.js';
 export * from './sim/movement.js';
 export * from './sim/input.js';
+export * from './sim/weapons.data.js';
+export * from './sim/combat.js';
+export * from './sim/vision.js';
 export * from './net/protocol.js';

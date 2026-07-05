@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { BootScene } from './scenes/BootScene.js';
 import { GameScene } from './scenes/GameScene.js';
+import { HudScene } from './scenes/HudScene.js';
 
 new Phaser.Game({
   type: Phaser.AUTO,
@@ -15,5 +16,5 @@ new Phaser.Game({
     roundPixels: true,
     antialias: true,
   },
-  scene: [BootScene, GameScene],
+  scene: [BootScene, GameScene, HudScene],
 });
