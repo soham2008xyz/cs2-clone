@@ -81,6 +81,7 @@ export interface SelfState {
   reload: number; // ticks until reload completes (0 = not reloading)
   bomb?: 1; // carrying the bomb
   kit?: 1; // has defuse kit
+  helm?: 1; // wearing a helmet (armor absorbs more)
   buy?: 1; // buying currently allowed
   nades?: string[]; // owned grenade ids, throw order
   blind?: number; // ticks of blindness remaining

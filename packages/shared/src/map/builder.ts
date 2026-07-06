@@ -1,4 +1,4 @@
-import { CH, type Callout, type MapDef } from './types.js';
+import { CH, type BuyZone, type Callout, type MapDef, type TeamId } from './types.js';
 
 /**
  * Authoring tool: start from all-walls, carve out rooms and corridors, then
@@ -7,6 +7,7 @@ import { CH, type Callout, type MapDef } from './types.js';
 export class MapBuilder {
   private cells: string[][];
   private callouts: Callout[] = [];
+  private buyzones: BuyZone[] = [];
 
   constructor(
     public readonly width: number,
@@ -55,12 +56,19 @@ export class MapBuilder {
     return this;
   }
 
+  /** Mark a tile rectangle as a team's buy area. */
+  buyzone(team: TeamId, x: number, y: number, w: number, h: number): this {
+    this.buyzones.push({ team, x, y, w, h });
+    return this;
+  }
+
   build(name: string, displayName: string): MapDef {
     return {
       name,
       displayName,
       grid: this.cells.map((row) => row.join('')),
       callouts: this.callouts,
+      ...(this.buyzones.length ? { buyzones: this.buyzones } : {}),
     };
   }
 }

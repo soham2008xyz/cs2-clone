@@ -20,12 +20,23 @@ export interface Callout {
   ty: number;
 }
 
+/** Rectangle of tiles where a team may buy (x/y/w/h in tile coords). */
+export interface BuyZone {
+  team: TeamId;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export interface MapDef {
   name: string;
   displayName: string;
   /** rows of equal-length strings using CH characters */
   grid: string[];
   callouts: Callout[];
+  /** authored buy areas; maps without them fall back to a spawn-radius rule */
+  buyzones?: BuyZone[];
 }
 
 /** Precomputed, gameplay-ready form of a MapDef. */
@@ -44,4 +55,6 @@ export interface CompiledMap {
   /** which bombsite (if any) covers a px position */
   siteAt(x: number, y: number): 'A' | 'B' | null;
   siteCenters: Record<'A' | 'B', Vec2>;
+  /** which team may buy at a px position (null = nobody; see MapDef.buyzones) */
+  buyzoneAt(x: number, y: number): TeamId | null;
 }

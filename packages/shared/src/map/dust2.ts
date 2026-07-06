@@ -79,6 +79,10 @@ function buildDust2(): MapDef {
     b.spawn('CT', 46 + i, 8);
   }
 
+  // Buy areas: each team's spawn plaza
+  b.buyzone('T', 20, 46, 16, 9); // within T spawn (x14-45, y45-55)
+  b.buyzone('CT', 44, 4, 14, 9); // full CT spawn (x44-57, y4-12)
+
   b.callout('B Site', 10, 12)
     .callout('B Doors', 25, 11)
     .callout('CT Mid', 37, 12)

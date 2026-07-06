@@ -4,6 +4,7 @@ import {
   getGrenade,
   GRENADES,
   PRICE_DEFUSE_KIT,
+  PRICE_HELMET,
   PRICE_KEVLAR,
   TICK_RATE,
   WEAPONS,
@@ -156,6 +157,7 @@ export class HudScene extends Phaser.Scene {
       items.push({ id: w.id, label: w.name, price: w.price });
     }
     items.push({ id: 'kevlar', label: 'Kevlar', price: PRICE_KEVLAR });
+    items.push({ id: 'helmet', label: 'Helmet', price: PRICE_HELMET });
     if (team === 'CT') items.push({ id: 'kit', label: 'Defuse Kit', price: PRICE_DEFUSE_KIT });
     for (const g of Object.values(GRENADES)) {
       if (g.team && g.team !== team) continue;
@@ -272,7 +274,7 @@ export class HudScene extends Phaser.Scene {
     if (teamChanged) this.buildBuyPanel(payload.team);
     const { hp, alive, me, match } = payload;
 
-    this.hpText.setText(alive ? `♥ ${Math.max(0, hp)}${me && me.armor > 0 ? `  ⛨ ${me.armor}` : ''}` : '');
+    this.hpText.setText(alive ? `♥ ${Math.max(0, hp)}${me && me.armor > 0 ? `  ⛨ ${me.armor}${me.helm ? '+' : ''}` : ''}` : '');
     if (me) {
       this.moneyText.setText(`$ ${me.money}${me.buy ? '  [B] BUY' : ''}`);
       if (me.slot === 4 && me.nades?.length) {

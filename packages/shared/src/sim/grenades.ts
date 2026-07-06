@@ -18,6 +18,11 @@ export interface GrenadeBody {
   vel: Vec2;
 }
 
+export interface GrenadeStep extends GrenadeBody {
+  /** true when the grenade reflected off a wall this tick (impact detonation). */
+  bounced: boolean;
+}
+
 const REST_SPEED = 4; // px/s below which we stop bouncing (fuse timer still runs)
 
 /**
@@ -25,20 +30,23 @@ const REST_SPEED = 4; // px/s below which we stop bouncing (fuse timer still run
  * (reflect + lose energy) plus isotropic drag, mirroring the movement
  * collision style so both share the same wall-solidity source of truth.
  */
-export function stepGrenade(body: GrenadeBody, map: CompiledMap, dt: number): GrenadeBody {
+export function stepGrenade(body: GrenadeBody, map: CompiledMap, dt: number): GrenadeStep {
   let { x, y } = body.pos;
   let { x: vx, y: vy } = body.vel;
+  let bounced = false;
 
   if (Math.hypot(vx, vy) > REST_SPEED) {
     const nx = x + vx * dt;
     if (circleCollidesMap(map, nx, y, GRENADE_RADIUS)) {
       vx = -vx * GRENADE_FRICTION;
+      bounced = true;
     } else {
       x = nx;
     }
     const ny = y + vy * dt;
     if (circleCollidesMap(map, x, ny, GRENADE_RADIUS)) {
       vy = -vy * GRENADE_FRICTION;
+      bounced = true;
     } else {
       y = ny;
     }
@@ -51,7 +59,7 @@ export function stepGrenade(body: GrenadeBody, map: CompiledMap, dt: number): Gr
     }
   }
 
-  return { pos: { x, y }, vel: { x: vx, y: vy } };
+  return { pos: { x, y }, vel: { x: vx, y: vy }, bounced };
 }
 
 export interface DamageResult {

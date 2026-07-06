@@ -44,6 +44,19 @@ describe('grenade physics', () => {
     for (let i = 0; i < 5; i++) body = stepGrenade(body, map, 1 / 60);
     expect(body.pos.x).toBeLessThan(15 * TILE_SIZE);
   });
+
+  it('reports the bounce tick (impact detonation for molotovs)', () => {
+    const map = corridor();
+    let body = { pos: at(13, 6), vel: { x: 400, y: 0 } };
+    const bounceTicks: number[] = [];
+    for (let i = 0; i < 30; i++) {
+      const stepped = stepGrenade(body, map, 1 / 60);
+      if (stepped.bounced) bounceTicks.push(i);
+      body = stepped;
+    }
+    expect(bounceTicks.length).toBeGreaterThan(0); // hit the wall at least once
+    expect(bounceTicks[0]).toBeGreaterThan(0); // but not while flying through open space
+  });
 });
 
 describe('HE damage', () => {

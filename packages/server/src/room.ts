@@ -19,6 +19,7 @@ import {
   getMap,
   getWeapon,
   GRENADE_MAX_TOTAL,
+  HELMET_PEN_MULT,
   GRENADE_THROW_SPEED,
   GRENADES,
   HE_ARMOR_PENETRATION,
@@ -37,6 +38,7 @@ import {
   PLANT_REWARD,
   PLANT_TIME,
   PRICE_DEFUSE_KIT,
+  PRICE_HELMET,
   PRICE_KEVLAR,
   resolveFlashBlind,
   resolveHeDamage,
@@ -128,6 +130,7 @@ export interface PlayerConn {
   alive: boolean;
   hasBomb: boolean;
   hasKit: boolean;
+  hasHelmet: boolean;
   primary: WeaponSlot | null;
   secondary: WeaponSlot | null;
   nades: string[]; // owned grenade ids, throw order (front = next thrown)
@@ -159,10 +162,16 @@ interface ActiveNade {
   kind: GrenadeKind;
   pos: Vec2;
   vel: Vec2;
-  fuseTick: number;
+  fuseTick: number; // timed detonation (he / flash)
+  bornTick: number; // throw tick, for rest/impact detonation windows
   ownerId: number;
   ownerTeam: TeamId;
 }
+
+// Physical detonation windows (smokes bloom at rest, fire ignites on impact)
+const SMOKE_MIN_AIR_SEC = 0.5;
+const SMOKE_MAX_AIR_SEC = 3.5;
+const FIRE_MAX_AIR_SEC = 2;
 
 interface SmokeZone {
   id: number;
@@ -187,6 +196,9 @@ export const activeWeapon = (p: PlayerConn): WeaponDef => {
   const slot = slotOf(p);
   return getWeapon(slot ? slot.id : 'knife');
 };
+
+/** Helmets make armor absorb more of every hit. */
+const penVs = (victim: PlayerConn, pen: number): number => (victim.hasHelmet ? pen * HELMET_PEN_MULT : pen);
 
 export class Room {
   readonly map: CompiledMap;
@@ -271,6 +283,7 @@ export class Room {
       alive: true,
       hasBomb: false,
       hasKit: false,
+      hasHelmet: false,
       primary: null,
       secondary: null,
       nades: [],
@@ -383,6 +396,8 @@ export class Room {
   }
 
   private inBuyzone(p: PlayerConn): boolean {
+    if (this.map.def.buyzones?.length) return this.map.buyzoneAt(p.pos.x, p.pos.y) === p.team;
+    // maps without authored buy areas: near own spawn counts
     const r = BUYZONE_RADIUS_TILES * TILE_SIZE;
     return this.map.spawns[p.team].some((s) => dist(s, p.pos) <= r);
   }
@@ -395,6 +410,12 @@ export class Room {
       if (p.money < PRICE_KEVLAR || p.armor >= 100) return;
       p.money -= PRICE_KEVLAR;
       p.armor = 100;
+      return;
+    }
+    if (item === 'helmet') {
+      if (p.hasHelmet || p.armor <= 0 || p.money < PRICE_HELMET) return;
+      p.money -= PRICE_HELMET;
+      p.hasHelmet = true;
       return;
     }
     if (item === 'kit') {
@@ -446,16 +467,33 @@ export class Room {
   }
 
   private tryPickup(p: PlayerConn): void {
-    if (p.primary) return;
     for (const [itemId, item] of this.groundItems) {
       if (dist(item.pos, p.pos) > PICKUP_RADIUS) continue;
       const w = getWeapon(item.weaponId);
-      if (w.cls === 'pistol') continue; // only primaries drop
-      p.primary = { id: item.weaponId, ammo: item.ammo, reserve: item.reserve };
-      p.activeSlot = 1;
+      const slot: WeaponSlot = { id: item.weaponId, ammo: item.ammo, reserve: item.reserve };
+      if (w.cls === 'pistol') {
+        if (p.secondary) continue;
+        p.secondary = slot;
+        p.activeSlot = 2;
+      } else {
+        if (p.primary) continue;
+        p.primary = slot;
+        p.activeSlot = 1;
+      }
       this.groundItems.delete(itemId);
       return;
     }
+  }
+
+  /** G: drop the currently held gun (primary or secondary) at the player's feet. */
+  private dropActiveWeapon(p: PlayerConn): void {
+    const slot = slotOf(p);
+    if (!slot) return; // knife / grenades can't be dropped
+    this.dropWeapon(p, slot);
+    if (p.activeSlot === 1) p.primary = null;
+    else p.secondary = null;
+    p.activeSlot = p.primary ? 1 : p.secondary ? 2 : 3;
+    p.reloadEndTick = 0;
   }
 
   private dropBomb(p: PlayerConn): void {
@@ -538,7 +576,7 @@ export class Room {
       const d = dist(p.pos, this.bomb.pos);
       if (d > BOMB_EXPLOSION_RADIUS) continue;
       const raw = BOMB_EXPLOSION_DAMAGE * (1 - d / BOMB_EXPLOSION_RADIUS);
-      const { hpDamage, armor } = applyArmor(raw, p.armor, 0.6);
+      const { hpDamage, armor } = applyArmor(raw, p.armor, penVs(p, 0.6));
       p.armor = armor;
       p.hp -= hpDamage;
       if (p.hp <= 0) {
@@ -563,6 +601,7 @@ export class Room {
       p.kills = 0;
       p.deaths = 0;
       p.armor = 0;
+      p.hasHelmet = false;
       p.hasKit = false;
       p.primary = null;
     }
@@ -610,6 +649,7 @@ export class Room {
       if (freshEconomy) {
         p.money = otMoney ? OT_MONEY : START_MONEY;
         p.armor = 0;
+        p.hasHelmet = false;
         p.hasKit = false;
         p.primary = null;
         p.nades = [];
@@ -617,7 +657,9 @@ export class Room {
       } else if (!survived) {
         p.primary = null;
         p.nades = [];
-        p.hasKit = false; // kit is lost on death (CS2)
+        p.armor = 0; // gear does not survive death (CS2)
+        p.hasHelmet = false;
+        p.hasKit = false;
         this.givePistolLoadout(p);
       } else {
         // survivors keep weapons; make sure the pistol matches the (possibly swapped) side
@@ -686,6 +728,7 @@ export class Room {
       p.hasBomb = false;
       p.money = START_MONEY;
       p.armor = 0;
+      p.hasHelmet = false;
       p.primary = null;
       p.nades = [];
       p.blindUntilTick = 0;
@@ -749,7 +792,7 @@ export class Room {
     const def = getGrenade(kind);
     const vel = fromAngle(input.a, GRENADE_THROW_SPEED);
     const id = this.nextNadeId++;
-    this.activeNades.set(id, { id, kind, pos: { ...p.pos }, vel, fuseTick: this.tick + sec(def.fuse), ownerId: p.id, ownerTeam: p.team });
+    this.activeNades.set(id, { id, kind, pos: { ...p.pos }, vel, fuseTick: this.tick + sec(def.fuse), bornTick: this.tick, ownerId: p.id, ownerTeam: p.team });
     this.emit({ e: 'nade_throw', kind, x: p.pos.x, y: p.pos.y });
 
     if (p.nades.length === 0) p.activeSlot = p.primary ? 1 : 2;
@@ -791,7 +834,7 @@ export class Room {
         for (const hit of resolveHeDamage(n.pos, targets, this.map)) {
           const victim = this.players.get(hit.id);
           if (!victim?.alive) continue;
-          const { hpDamage, armor } = applyArmor(hit.rawDamage, victim.armor, HE_ARMOR_PENETRATION);
+          const { hpDamage, armor } = applyArmor(hit.rawDamage, victim.armor, penVs(victim, HE_ARMOR_PENETRATION));
           victim.armor = armor;
           victim.hp -= hpDamage;
           this.emit({ e: 'hurt', d: hpDamage, from: n.ownerId }, victim.id);
@@ -831,14 +874,24 @@ export class Room {
 
   private updateGrenades(): void {
     for (const [id, n] of this.activeNades) {
-      if (this.tick >= n.fuseTick) {
-        this.detonateNade(n);
-        this.activeNades.delete(id);
-        continue;
-      }
       const stepped = stepGrenade({ pos: n.pos, vel: n.vel }, this.map, TICK_DT);
       n.pos = stepped.pos;
       n.vel = stepped.vel;
+
+      const age = this.tick - n.bornTick;
+      const atRest = n.vel.x === 0 && n.vel.y === 0;
+      let detonate: boolean;
+      if (n.kind === 'smoke') {
+        detonate = (atRest && age >= sec(SMOKE_MIN_AIR_SEC)) || age >= sec(SMOKE_MAX_AIR_SEC);
+      } else if (n.kind === 'molotov' || n.kind === 'incendiary') {
+        detonate = stepped.bounced || atRest || age >= sec(FIRE_MAX_AIR_SEC);
+      } else {
+        detonate = this.tick >= n.fuseTick; // he / flash: timed fuse
+      }
+      if (detonate) {
+        this.detonateNade(n);
+        this.activeNades.delete(id);
+      }
     }
 
     const burned = new Set<number>(); // overlapping fires burn once per tick
@@ -896,7 +949,7 @@ export class Room {
     if (result.hit) {
       const victim = this.players.get(result.hit.targetId);
       if (victim?.alive) {
-        const { hpDamage, armor } = applyArmor(result.hit.rawDamage, victim.armor, w.armorPen);
+        const { hpDamage, armor } = applyArmor(result.hit.rawDamage, victim.armor, penVs(victim, w.armorPen));
         victim.armor = armor;
         victim.hp -= hpDamage;
         this.emit({ e: 'hit', id: p.id, target: victim.id, d: hpDamage }, p.id);
@@ -983,6 +1036,7 @@ export class Room {
         if (p.alive) {
           if (input.w) this.switchSlot(p, input.w);
           if (input.b & BTN.RELOAD) this.startReload(p);
+          if ((input.b & BTN.DROP) !== 0 && (p.prevButtons & BTN.DROP) === 0) this.dropActiveWeapon(p);
           if (canMove) {
             p.pos = stepMovement(p.pos, buttonsToMove(input.b), activeWeapon(p).mobility, this.map, TICK_DT);
           }
@@ -1064,6 +1118,7 @@ export class Room {
     };
     if (p.hasBomb) s.bomb = 1;
     if (p.hasKit) s.kit = 1;
+    if (p.hasHelmet) s.helm = 1;
     if (this.buyingAllowed(p)) s.buy = 1;
     if (p.nades.length > 0) s.nades = p.nades;
     if (p.blindUntilTick > this.tick) s.blind = p.blindUntilTick - this.tick;

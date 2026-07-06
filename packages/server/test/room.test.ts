@@ -7,12 +7,25 @@ import { Room, type PlayerConn } from '../src/room.js';
 const FAST = { freeze: 0.05, round: 5, bomb: 1, plant: 0.1, defuse: 0.2, defuseKit: 0.1, roundEnd: 0.1 };
 
 /** Private internals the tests poke at (TS `private` is compile-time only). */
+interface NadeLike {
+  id: number;
+  kind: string;
+  pos: { x: number; y: number };
+  vel: { x: number; y: number };
+  fuseTick: number;
+  bornTick: number;
+  ownerId: number;
+  ownerTeam: TeamId;
+}
+
 interface RoomInternals {
   step(): void;
   startRound(): void;
   streaks: { T: number; CT: number };
   fires: Map<number, { id: number; kind: string; pos: { x: number; y: number }; untilTick: number; ownerId: number; ownerTeam: TeamId }>;
-  activeNades: Map<number, { pos: { x: number; y: number }; vel: { x: number; y: number }; fuseTick: number }>;
+  activeNades: Map<number, NadeLike>;
+  smokes: Map<number, unknown>;
+  groundItems: Map<number, { weaponId: string }>;
   bomb: { mode: string; pos: { x: number; y: number }; explodeTick: number };
   phaseEndTick: number;
   roundNumber: number;
@@ -201,5 +214,100 @@ describe('utility friendly fire & attribution', () => {
     step(room, 1);
     expect(ct.hp).toBe(100); // FF off: teammate not burned
     expect(t.hp).toBeCloseTo(100 - MOLOTOV_DPS * TICK_DT, 5); // exactly one zone's tick, not two
+  });
+});
+
+describe('gameplay features', () => {
+  it('helmet strengthens armor against the same blast', () => {
+    const { room } = liveRoom();
+    const t = room.addPlayer(null, 'T1', 'T');
+    const bare = room.addPlayer(null, 'CT1', 'CT');
+    const helmeted = room.addPlayer(null, 'CT2', 'CT');
+    stepUntil(room, () => room.phase === 'live');
+
+    bare.armor = 100;
+    helmeted.armor = 100;
+    helmeted.hasHelmet = true;
+    bare.pos = { x: 300, y: 150 };
+    helmeted.pos = { x: 300, y: 200 }; // both 25px from the blast center
+
+    guts(room).activeNades.set(999, {
+      id: 999, kind: 'he', pos: { x: 300, y: 175 }, vel: { x: 0, y: 0 },
+      fuseTick: room.tick + 1, bornTick: room.tick, ownerId: t.id, ownerTeam: 'T',
+    });
+    step(room, 2);
+
+    expect(bare.hp).toBeLessThan(100);
+    expect(helmeted.hp).toBeGreaterThan(bare.hp);
+  });
+
+  it('G drops the held gun; E picks up primaries and pistols', () => {
+    const { room, send } = liveRoom();
+    const a = room.addPlayer(null, 'A', 'T');
+    const b = room.addPlayer(null, 'B', 'T');
+    room.addPlayer(null, 'CT1', 'CT');
+    stepUntil(room, () => room.phase === 'live');
+
+    a.primary = { id: 'ak47', ammo: 30, reserve: 90 };
+    a.activeSlot = 1;
+    b.pos = { ...a.pos };
+
+    send(a.id, BTN.DROP);
+    step(room, 1);
+    expect(a.primary).toBeNull();
+    expect(a.activeSlot).toBe(2); // falls back to the pistol
+    expect([...guts(room).groundItems.values()][0]?.weaponId).toBe('ak47');
+
+    send(b.id, BTN.USE);
+    step(room, 1);
+    expect(b.primary?.id).toBe('ak47');
+
+    send(a.id, 0); // release G so the next press is a fresh edge
+    step(room, 1);
+    send(a.id, BTN.DROP); // now drop the pistol — knife remains
+    step(room, 1);
+    expect(a.secondary).toBeNull();
+    expect(a.activeSlot).toBe(3);
+
+    b.secondary = null;
+    send(b.id, BTN.USE);
+    step(room, 1);
+    expect(b.secondary?.id).toBe('glock'); // pistols are picked up too
+  });
+
+  it('smoke blooms where it rests instead of on a mid-flight timer', () => {
+    const { room, send } = liveRoom();
+    const t = room.addPlayer(null, 'T1', 'T');
+    room.addPlayer(null, 'CT1', 'CT');
+    stepUntil(room, () => room.phase === 'live');
+
+    t.pos = { x: 150, y: 150 };
+    t.nades = ['smoke'];
+    send(t.id, 0, { w: 4 });
+    step(room, 1);
+    send(t.id, BTN.ATTACK); // thrown rightward across open ground
+    step(room, 1);
+
+    step(room, 135); // 2.25s: the old 2s fuse would already have popped
+    expect(guts(room).smokes.size).toBe(0); // still sliding
+    step(room, 90); // past rest / hard cap
+    expect(guts(room).smokes.size).toBe(1);
+  });
+
+  it('molotov ignites on wall impact, long before any fuse', () => {
+    const { room, send } = liveRoom();
+    const t = room.addPlayer(null, 'T1', 'T');
+    room.addPlayer(null, 'CT1', 'CT');
+    stepUntil(room, () => room.phase === 'live');
+
+    t.pos = { x: 64, y: 150 }; // one tile from the west wall
+    t.nades = ['molotov'];
+    send(t.id, 0, { w: 4 });
+    step(room, 1);
+    send(t.id, BTN.ATTACK, { a: Math.PI }); // hurl it straight at the wall
+    step(room, 1);
+
+    step(room, 15); // impact after ~4 ticks; old fuse was 96 ticks
+    expect(guts(room).fires.size).toBe(1);
   });
 });

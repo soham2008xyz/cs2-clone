@@ -68,7 +68,7 @@ export class GameScene extends Phaser.Scene {
   private darkness!: Phaser.GameObjects.Graphics;
   private tracerGfx!: Phaser.GameObjects.Graphics;
   private tracers: Tracer[] = [];
-  private keys!: Record<'W' | 'A' | 'S' | 'D' | 'SHIFT' | 'R' | 'E' | 'ONE' | 'TWO' | 'THREE' | 'FOUR', Phaser.Input.Keyboard.Key>;
+  private keys!: Record<'W' | 'A' | 'S' | 'D' | 'SHIFT' | 'R' | 'E' | 'G' | 'ONE' | 'TWO' | 'THREE' | 'FOUR', Phaser.Input.Keyboard.Key>;
   private pendingSlot: number | undefined;
   private accumulator = 0;
   private statusText!: Phaser.GameObjects.Text;
@@ -115,7 +115,7 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.setZoom(1.25);
     this.cameras.main.centerOn(this.map.widthPx / 2, this.map.heightPx / 2);
 
-    this.keys = this.input.keyboard!.addKeys('W,A,S,D,SHIFT,R,E,ONE,TWO,THREE,FOUR') as GameScene['keys'];
+    this.keys = this.input.keyboard!.addKeys('W,A,S,D,SHIFT,R,E,G,ONE,TWO,THREE,FOUR') as GameScene['keys'];
     this.input.keyboard!.on('keydown-ONE', () => (this.pendingSlot = 1));
     this.input.keyboard!.on('keydown-TWO', () => (this.pendingSlot = 2));
     this.input.keyboard!.on('keydown-THREE', () => (this.pendingSlot = 3));
@@ -359,6 +359,7 @@ export class GameScene extends Phaser.Scene {
         if (this.keys.SHIFT.isDown) buttons |= BTN.WALK;
         if (this.keys.R.isDown) buttons |= BTN.RELOAD;
         if (this.keys.E.isDown) buttons |= BTN.USE;
+        if (this.keys.G.isDown) buttons |= BTN.DROP;
         if (this.input.activePointer.isDown) buttons |= BTN.ATTACK;
       }
       const mobility = this.me ? getWeapon(this.me.weapon).mobility : 1;

@@ -49,6 +49,8 @@ export const PLANT_REWARD = 300;
 export const PRICE_KEVLAR = 650;
 export const PRICE_HELMET = 350;
 export const PRICE_DEFUSE_KIT = 400;
+/** With a helmet, armor absorbs more: effective armorPen is multiplied by this. */
+export const HELMET_PEN_MULT = 0.85;
 
 // ── Grenades ──────────────────────────────────────────────────────────────────
 export const GRENADE_MAX_TOTAL = 4;

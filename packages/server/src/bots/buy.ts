@@ -17,7 +17,7 @@ export function decideBotBuys(money: number, team: TeamId, hasKit: boolean): str
   else if (money >= smg.price) wishlist.push(smg.id);
   else if (money >= 700) wishlist.push('deagle');
 
-  wishlist.push('kevlar');
+  wishlist.push('kevlar', 'helmet'); // helmet requires armor, so it must follow kevlar
   if (team === 'CT' && !hasKit) wishlist.push('kit');
   wishlist.push('smoke', 'flash');
   wishlist.push(team === 'T' ? 'molotov' : 'incendiary');

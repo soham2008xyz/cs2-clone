@@ -61,5 +61,13 @@ export function compileMap(def: MapDef): CompiledMap {
     spawns,
     siteAt: (x, y) => siteTiles.get(Math.floor(y / TILE_SIZE) * width + Math.floor(x / TILE_SIZE)) ?? null,
     siteCenters,
+    buyzoneAt: (x, y) => {
+      const tx = Math.floor(x / TILE_SIZE);
+      const ty = Math.floor(y / TILE_SIZE);
+      for (const z of def.buyzones ?? []) {
+        if (tx >= z.x && tx < z.x + z.w && ty >= z.y && ty < z.y + z.h) return z.team;
+      }
+      return null;
+    },
   };
 }

@@ -37,6 +37,15 @@ function tileIndexAt(map: CompiledMap, px: number, py: number): number {
 describe('dust2', () => {
   const map = getMap('dust2');
 
+  it('buy zones cover each spawn for the right team only', () => {
+    const [tSpawn] = map.spawns.T;
+    const [ctSpawn] = map.spawns.CT;
+    expect(map.buyzoneAt(tSpawn.x, tSpawn.y)).toBe('T');
+    expect(map.buyzoneAt(ctSpawn.x, ctSpawn.y)).toBe('CT');
+    // mid is nobody's buy area
+    expect(map.buyzoneAt(37.5 * TILE_SIZE, 30.5 * TILE_SIZE)).toBeNull();
+  });
+
   it('compiles with equal-width rows and border walls', () => {
     expect(map.width).toBe(84);
     expect(map.height).toBe(60);
