@@ -46,6 +46,9 @@ export class Connection {
 }
 
 export function serverUrl(roomCode: string): string {
-  const host = location.hostname || 'localhost';
-  return `ws://${host}:8090?room=${encodeURIComponent(roomCode)}`;
+  const room = encodeURIComponent(roomCode);
+  // vite dev server: game server runs separately on :8090; otherwise same origin
+  if (location.port === '5173') return `ws://${location.hostname || 'localhost'}:8090?room=${room}`;
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  return `${proto}://${location.host}?room=${room}`;
 }

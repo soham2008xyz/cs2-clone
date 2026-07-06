@@ -16,6 +16,16 @@ npm run dev:client   # browser client on :5173 (open this in your browser)
 Open the client, pick a name, and either **Quick Match vs Bots**, **Create
 Room** (share the 4-letter code with a friend), or **Join Room** with a code.
 
+### Single-server (production) mode
+
+```bash
+npm run build   # builds the client bundle and type-checks everything
+npm start       # serves the built client AND the game API/ws on :8090
+```
+
+Then open <http://localhost:8090> — no Vite needed; one Node process runs
+the whole game.
+
 ## Controls
 
 | Key | Action |
@@ -25,12 +35,18 @@ Room** (share the 4-letter code with a friend), or **Join Room** with a code.
 | Mouse | Aim / hold to fire |
 | R | Reload |
 | E | Use (plant / defuse / pick up dropped weapon) |
+| G | Drop the held gun |
 | 1 / 2 / 3 / 4 | Primary / secondary / knife / grenade |
-| B | Buy menu (during freezetime or the first 20s of a round) |
+| B | Buy menu (freezetime or first 20s of a round, inside your buy zone) |
+| M | Mute sound |
 | Tab (hold) | Scoreboard |
 | Space | Cycle spectate target after death |
 | [ / ] | Join T / CT (lobby only, before the match starts) |
 | Enter | Chat |
+
+Buy extras: **Kevlar** ($650) absorbs damage, **Helmet** ($350, requires
+kevlar) makes that armor absorb 15% more, and CTs can buy a **Defuse Kit**
+($400, halves defuse time).
 
 ## Testing
 

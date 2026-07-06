@@ -5,8 +5,12 @@ export interface RoomListing {
   phase: string;
 }
 
+const VITE_DEV_PORT = '5173';
+
 export function apiBase(): string {
-  return `http://${location.hostname || 'localhost'}:8090`;
+  // vite dev server: game server runs separately on :8090; otherwise same origin
+  if (location.port === VITE_DEV_PORT) return `http://${location.hostname || 'localhost'}:8090`;
+  return location.origin;
 }
 
 export async function listRooms(): Promise<{ maps: string[]; rooms: RoomListing[] }> {

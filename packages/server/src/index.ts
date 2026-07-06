@@ -1,5 +1,8 @@
-import { createServer } from 'node:http';
+import { createReadStream, existsSync, statSync } from 'node:fs';
+import { createServer, type ServerResponse } from 'node:http';
+import { extname, join, resolve } from 'node:path';
 import { parse as parseUrl } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { decode, listMaps, type ClientMsg } from '@cs2d/shared';
 import { RoomManager } from './roomManager.js';
@@ -28,6 +31,34 @@ function readJsonBody(req: import('node:http').IncomingMessage): Promise<unknown
 }
 
 const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET,POST,OPTIONS', 'access-control-allow-headers': 'content-type' };
+
+// Built client (vite output) served for any non-API GET — one process runs the whole game.
+const CLIENT_DIST = resolve(fileURLToPath(new URL('.', import.meta.url)), '../../client/dist');
+const MIME: Record<string, string> = {
+  '.html': 'text/html',
+  '.js': 'text/javascript',
+  '.css': 'text/css',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.svg': 'image/svg+xml',
+  '.json': 'application/json',
+  '.map': 'application/json',
+  '.ico': 'image/x-icon',
+};
+
+function serveClient(pathname: string, res: ServerResponse): void {
+  if (!existsSync(CLIENT_DIST)) {
+    res.writeHead(200, { 'content-type': 'application/json', ...cors });
+    res.end(JSON.stringify({ ok: true, maps: listMaps(), note: 'client not built — run: npm run build' }));
+    return;
+  }
+  let file = resolve(join(CLIENT_DIST, pathname === '/' ? 'index.html' : pathname));
+  if (!file.startsWith(CLIENT_DIST) || !existsSync(file) || statSync(file).isDirectory()) {
+    file = join(CLIENT_DIST, 'index.html'); // SPA fallback (also guards path traversal)
+  }
+  res.writeHead(200, { 'content-type': MIME[extname(file)] ?? 'application/octet-stream' });
+  createReadStream(file).pipe(res);
+}
 
 const http = createServer(async (req, res) => {
   const url = parseUrl(req.url ?? '', true);
@@ -58,8 +89,7 @@ const http = createServer(async (req, res) => {
     return;
   }
 
-  res.writeHead(200, { 'content-type': 'application/json', ...cors });
-  res.end(JSON.stringify({ ok: true, maps: listMaps() }));
+  serveClient(url.pathname ?? '/', res);
 });
 
 const wss = new WebSocketServer({ server: http });
