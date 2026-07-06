@@ -22,6 +22,11 @@ export class BootScene extends Phaser.Scene {
     // Kenney sprites (optional upgrade; missing files are tolerated)
     this.load.image('kenney_T', 'assets/man_brown_gun.png');
     this.load.image('kenney_CT', 'assets/soldier1_gun.png');
+    // Kenney particle textures (effects fall back to vector shapes without them)
+    this.load.image('muzzle', 'assets/muzzle.png');
+    this.load.image('smokepuff', 'assets/smoke.png');
+    this.load.image('flame', 'assets/flame.png');
+    this.load.image('glow', 'assets/glow.png');
   }
 
   create(): void {

@@ -82,6 +82,8 @@ export class GameScene extends Phaser.Scene {
   private nades: NadeSnap[] = [];
   private zones: ZoneSnap[] = [];
   private zoneGfx!: Phaser.GameObjects.Graphics;
+  private smokeClouds = new Map<number, Phaser.GameObjects.Image[]>();
+  private fireFx = new Map<number, { emitter: Phaser.GameObjects.Particles.ParticleEmitter; glow: Phaser.GameObjects.Image }>();
   private spectateIndex = 0;
   private spectateTarget = -1;
   private chatOpen = false;
@@ -247,6 +249,17 @@ export class GameScene extends Phaser.Scene {
         this.tracers.push({ x: ev.x, y: ev.y, tx: ev.tx, ty: ev.ty, until: this.time.now + 70 });
         const cls = getWeapon(ev.w).cls;
         sfx(`shot_${cls}`, { x: ev.x, y: ev.y }, this.listener);
+        if (cls !== 'knife' && this.textures.exists('muzzle')) {
+          const ang = Math.atan2(ev.ty - ev.y, ev.tx - ev.x);
+          const m = this.add
+            .image(ev.x + Math.cos(ang) * 20, ev.y + Math.sin(ang) * 20, 'muzzle')
+            .setDepth(16)
+            .setRotation(ang)
+            .setDisplaySize(30, 30)
+            .setBlendMode(Phaser.BlendModes.ADD)
+            .setAlpha(0.9);
+          this.tweens.add({ targets: m, alpha: 0, duration: 60, onComplete: () => m.destroy() });
+        }
         break;
       }
       case 'kill':
@@ -272,6 +285,7 @@ export class GameScene extends Phaser.Scene {
         this.cameras.main.shake(400, 0.01);
         const boom = this.add.circle(ev.x, ev.y, 40, 0xffcc66, 0.9).setDepth(30);
         this.tweens.add({ targets: boom, radius: 320, alpha: 0, duration: 550, onComplete: () => boom.destroy() });
+        this.explosionGlow(ev.x, ev.y, 680);
         this.game.events.emit('hud:banner', { text: 'THE BOMB HAS EXPLODED', color: '#ffb066', ttl: 3500 });
         sfx('c4_explosion'); // heard map-wide
         break;
@@ -313,6 +327,7 @@ export class GameScene extends Phaser.Scene {
         const boom = this.add.circle(ev.x, ev.y, 20, 0xffcc66, 0.85).setDepth(30);
         this.tweens.add({ targets: boom, radius: 130, alpha: 0, duration: 350, onComplete: () => boom.destroy() });
         if (Math.hypot(ev.x - this.predictor.pos.x, ev.y - this.predictor.pos.y) < 250) this.cameras.main.shake(180, 0.006);
+        this.explosionGlow(ev.x, ev.y, 260);
         sfx('he_boom', { x: ev.x, y: ev.y }, this.listener);
         break;
       }
@@ -334,6 +349,67 @@ export class GameScene extends Phaser.Scene {
   private onBuy(item: string): void {
     this.conn.send({ t: 'buy', item });
     sfx('buy');
+  }
+
+  /** Additive glow burst for HE / C4 detonations. */
+  private explosionGlow(x: number, y: number, size: number): void {
+    if (!this.textures.exists('glow')) return;
+    const g = this.add
+      .image(x, y, 'glow')
+      .setDepth(29)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setDisplaySize(size * 0.4, size * 0.4)
+      .setAlpha(0.95);
+    this.tweens.add({
+      targets: g,
+      displayWidth: size,
+      displayHeight: size,
+      alpha: 0,
+      duration: 420,
+      onComplete: () => g.destroy(),
+    });
+  }
+
+  /** Cluster of drifting textured puffs; sized by the (blooming) radius, fading near expiry. */
+  private updateSmokeCloud(zid: number, x: number, y: number, radius: number, ticksLeft: number): void {
+    const PUFFS = 7;
+    let puffs = this.smokeClouds.get(zid);
+    if (!puffs) {
+      puffs = Array.from({ length: PUFFS }, () => this.add.image(x, y, 'smokepuff').setDepth(6).setAlpha(0).setTint(0xd8d8d8));
+      this.smokeClouds.set(zid, puffs);
+    }
+    const fade = Math.min(1, ticksLeft / 90); // dissipate over the last 1.5s
+    puffs.forEach((img, i) => {
+      const ang = (i / PUFFS) * Math.PI * 2 + zid * 1.7;
+      const rr = i === 0 ? 0 : radius * 0.45;
+      img.setPosition(x + Math.cos(ang) * rr, y + Math.sin(ang) * rr);
+      img.setDisplaySize(radius * 1.5, radius * 1.5);
+      img.setRotation(ang + this.time.now / 4000);
+      img.setAlpha(0.75 * fade);
+    });
+  }
+
+  /** Flame particle emitter over an additive ground glow. */
+  private updateFireFx(zid: number, x: number, y: number, radius: number): void {
+    let fx = this.fireFx.get(zid);
+    if (!fx) {
+      const glow = this.add.image(x, y, 'glow').setDepth(6).setBlendMode(Phaser.BlendModes.ADD).setTint(0xff7722);
+      const emitter = this.add
+        .particles(x, y, 'flame', {
+          speed: { min: 5, max: 25 },
+          lifespan: { min: 300, max: 600 },
+          alpha: { start: 0.75, end: 0 },
+          scale: { start: 0.05, end: 0.11 },
+          blendMode: 'ADD',
+          frequency: 30,
+          emitZone: { type: 'random', source: new Phaser.Geom.Circle(0, 0, radius * 0.85), quantity: 1 },
+        })
+        .setDepth(7);
+      fx = { emitter, glow };
+      this.fireFx.set(zid, fx);
+    }
+    const flicker = 0.75 + 0.15 * Math.sin(this.time.now / 90 + x);
+    fx.glow.setDisplaySize(radius * 2.6, radius * 2.6).setAlpha(0.5 * flicker);
   }
 
   private applyRoster(entries: RosterEntry[]): void {
@@ -511,21 +587,46 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    // smoke / fire zones
+    // smoke / fire zones (Kenney particle textures; vector fallback when missing)
     const smokeOccluders = this.zones.filter((z) => z[1] === 'smoke').map((z) => ({ pos: { x: z[2], y: z[3] }, radius: z[4] }));
+    const smokeTex = this.textures.exists('smokepuff');
+    const flameTex = this.textures.exists('flame') && this.textures.exists('glow');
+    const seenZones = new Set<number>();
     this.zoneGfx.clear();
-    for (const [, kind, x, y, radius] of this.zones) {
+    for (const [zid, kind, x, y, radius, ticksLeft] of this.zones) {
+      seenZones.add(zid);
       if (kind === 'smoke') {
-        this.zoneGfx.fillStyle(0xcfcfcf, 0.92);
-        this.zoneGfx.fillCircle(x, y, radius);
-        this.zoneGfx.lineStyle(2, 0xb0b0b0, 0.5);
-        this.zoneGfx.strokeCircle(x, y, radius);
+        if (smokeTex) {
+          this.updateSmokeCloud(zid, x, y, radius, ticksLeft);
+        } else {
+          this.zoneGfx.fillStyle(0xcfcfcf, 0.92);
+          this.zoneGfx.fillCircle(x, y, radius);
+          this.zoneGfx.lineStyle(2, 0xb0b0b0, 0.5);
+          this.zoneGfx.strokeCircle(x, y, radius);
+        }
       } else {
-        const flicker = 0.75 + 0.15 * Math.sin(this.time.now / 90 + x);
-        this.zoneGfx.fillStyle(0xff6a1a, 0.55 * flicker);
-        this.zoneGfx.fillCircle(x, y, radius);
-        this.zoneGfx.fillStyle(0xffcc55, 0.45 * flicker);
-        this.zoneGfx.fillCircle(x, y, radius * 0.55);
+        if (flameTex) {
+          this.updateFireFx(zid, x, y, radius);
+        } else {
+          const flicker = 0.75 + 0.15 * Math.sin(this.time.now / 90 + x);
+          this.zoneGfx.fillStyle(0xff6a1a, 0.55 * flicker);
+          this.zoneGfx.fillCircle(x, y, radius);
+          this.zoneGfx.fillStyle(0xffcc55, 0.45 * flicker);
+          this.zoneGfx.fillCircle(x, y, radius * 0.55);
+        }
+      }
+    }
+    for (const [zid, puffs] of this.smokeClouds) {
+      if (!seenZones.has(zid)) {
+        puffs.forEach((img) => img.destroy());
+        this.smokeClouds.delete(zid);
+      }
+    }
+    for (const [zid, fx] of this.fireFx) {
+      if (!seenZones.has(zid)) {
+        fx.emitter.destroy();
+        fx.glow.destroy();
+        this.fireFx.delete(zid);
       }
     }
 
