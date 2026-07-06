@@ -12,6 +12,7 @@ import {
   DEFUSE_TIME_KIT,
   dist,
   encode,
+  FRIENDLY_FIRE,
   fromAngle,
   FREEZE_TIME,
   getGrenade,
@@ -159,6 +160,8 @@ interface ActiveNade {
   pos: Vec2;
   vel: Vec2;
   fuseTick: number;
+  ownerId: number;
+  ownerTeam: TeamId;
 }
 
 interface SmokeZone {
@@ -170,8 +173,11 @@ interface SmokeZone {
 
 interface FireZone {
   id: number;
+  kind: GrenadeKind; // molotov or incendiary (killfeed label)
   pos: Vec2;
   untilTick: number;
+  ownerId: number;
+  ownerTeam: TeamId;
 }
 
 const slotOf = (p: PlayerConn): WeaponSlot | null =>
@@ -520,6 +526,7 @@ export class Room {
 
   private defuseBomb(): void {
     for (const p of this.players.values()) p.actionStartTick = 0;
+    this.bomb.mode = 'none';
     this.emit({ e: 'defused' });
     this.endRound('bomb_defused');
   }
@@ -538,6 +545,7 @@ export class Room {
         p.hp = 0;
         p.alive = false;
         p.deaths++;
+        this.emit({ e: 'kill', k: 0, v: p.id, w: 'c4' });
       }
     }
     this.bomb.mode = 'none';
@@ -578,6 +586,7 @@ export class Room {
 
     const freshEconomy = isPistolRound(this.roundNumber) || isOvertimeHalfStart(this.roundNumber);
     const otMoney = isOvertimeHalfStart(this.roundNumber);
+    if (freshEconomy) this.streaks = { T: 0, CT: 0 }; // loss bonus resets at halftime / OT halves (CS2)
 
     this.groundItems.clear();
     this.activeNades.clear();
@@ -608,7 +617,7 @@ export class Room {
       } else if (!survived) {
         p.primary = null;
         p.nades = [];
-        p.hasKit = p.team === 'CT' ? p.hasKit : false;
+        p.hasKit = false; // kit is lost on death (CS2)
         this.givePistolLoadout(p);
       } else {
         // survivors keep weapons; make sure the pistol matches the (possibly swapped) side
@@ -638,7 +647,9 @@ export class Room {
     this.score[winner]++;
 
     for (const p of this.players.values()) {
-      p.money = clampMoney(p.money + (p.team === winner ? winnerMoney : loserMoney));
+      // CS2: losers alive when time expires (saving) receive no loss bonus
+      const noSaveMoney = p.team !== winner && reason === 'time' && p.alive;
+      p.money = clampMoney(p.money + (p.team === winner ? winnerMoney : noSaveMoney ? 0 : loserMoney));
       p.actionStartTick = 0;
     }
 
@@ -738,7 +749,7 @@ export class Room {
     const def = getGrenade(kind);
     const vel = fromAngle(input.a, GRENADE_THROW_SPEED);
     const id = this.nextNadeId++;
-    this.activeNades.set(id, { id, kind, pos: { ...p.pos }, vel, fuseTick: this.tick + sec(def.fuse) });
+    this.activeNades.set(id, { id, kind, pos: { ...p.pos }, vel, fuseTick: this.tick + sec(def.fuse), ownerId: p.id, ownerTeam: p.team });
     this.emit({ e: 'nade_throw', kind, x: p.pos.x, y: p.pos.y });
 
     if (p.nades.length === 0) p.activeSlot = p.primary ? 1 : 2;
@@ -749,15 +760,25 @@ export class Room {
     return SMOKE_RADIUS * Math.min(1, (this.tick - s.startTick) / bloomTicks);
   }
 
-  private killByEnvironment(p: PlayerConn): void {
-    p.hp = 0;
-    p.alive = false;
-    p.deaths++;
-    if (p.primary) {
-      this.dropWeapon(p, p.primary);
-      p.primary = null;
+  /** Death by grenade/fire: credits the thrower (killfeed, kills, reward) unless it was a self-kill. */
+  private killByUtility(victim: PlayerConn, ownerId: number, weaponId: string): void {
+    victim.hp = 0;
+    victim.alive = false;
+    victim.deaths++;
+    victim.actionStartTick = 0;
+    const owner = this.players.get(ownerId);
+    const credited = owner && owner.id !== victim.id ? owner : null;
+    if (credited) {
+      credited.kills++;
+      credited.money = clampMoney(credited.money + getGrenade(weaponId).killReward);
     }
-    if (p.hasBomb) this.dropBomb(p);
+    this.emit({ e: 'kill', k: credited?.id ?? 0, v: victim.id, w: weaponId });
+    if (victim.primary) {
+      this.dropWeapon(victim, victim.primary);
+      victim.primary = null;
+    }
+    if (victim.hasBomb) this.dropBomb(victim);
+    if (this.phase === 'waiting') victim.respawnTick = this.tick + WARMUP_RESPAWN_TICKS;
     this.broadcastRoster();
   }
 
@@ -765,7 +786,7 @@ export class Room {
     switch (n.kind) {
       case 'he': {
         const targets = [...this.players.values()]
-          .filter((p) => p.alive)
+          .filter((p) => p.alive && (FRIENDLY_FIRE || p.id === n.ownerId || p.team !== n.ownerTeam))
           .map((p) => ({ id: p.id, pos: p.pos, alive: p.alive }));
         for (const hit of resolveHeDamage(n.pos, targets, this.map)) {
           const victim = this.players.get(hit.id);
@@ -773,8 +794,8 @@ export class Room {
           const { hpDamage, armor } = applyArmor(hit.rawDamage, victim.armor, HE_ARMOR_PENETRATION);
           victim.armor = armor;
           victim.hp -= hpDamage;
-          this.emit({ e: 'hurt', d: hpDamage, from: 0 }, victim.id);
-          if (victim.hp <= 0) this.killByEnvironment(victim);
+          this.emit({ e: 'hurt', d: hpDamage, from: n.ownerId }, victim.id);
+          if (victim.hp <= 0) this.killByUtility(victim, n.ownerId, n.kind);
         }
         this.emit({ e: 'he_pop', x: n.pos.x, y: n.pos.y });
         break;
@@ -801,7 +822,7 @@ export class Room {
       case 'molotov':
       case 'incendiary': {
         const id = this.nextZoneId++;
-        this.fires.set(id, { id, pos: { ...n.pos }, untilTick: this.tick + sec(MOLOTOV_DURATION) });
+        this.fires.set(id, { id, kind: n.kind, pos: { ...n.pos }, untilTick: this.tick + sec(MOLOTOV_DURATION), ownerId: n.ownerId, ownerTeam: n.ownerTeam });
         this.emit({ e: 'molotov_ignite', x: n.pos.x, y: n.pos.y });
         break;
       }
@@ -820,17 +841,20 @@ export class Room {
       n.vel = stepped.vel;
     }
 
+    const burned = new Set<number>(); // overlapping fires burn once per tick
     for (const [id, f] of this.fires) {
       if (this.tick >= f.untilTick) {
         this.fires.delete(id);
         continue;
       }
       for (const p of this.players.values()) {
-        if (!p.alive || dist(p.pos, f.pos) > MOLOTOV_RADIUS) continue;
+        if (!p.alive || burned.has(p.id) || dist(p.pos, f.pos) > MOLOTOV_RADIUS) continue;
+        if (!FRIENDLY_FIRE && p.id !== f.ownerId && p.team === f.ownerTeam) continue;
+        burned.add(p.id);
         const d = MOLOTOV_DPS * TICK_DT;
         p.hp -= d;
-        this.emit({ e: 'hurt', d, from: 0 }, p.id);
-        if (p.hp <= 0) this.killByEnvironment(p);
+        this.emit({ e: 'hurt', d, from: f.ownerId }, p.id);
+        if (p.hp <= 0) this.killByUtility(p, f.ownerId, f.kind);
       }
     }
 
@@ -866,7 +890,7 @@ export class Room {
       targets.push({ id: other.id, pos, team: other.team, alive: other.alive });
     }
 
-    const result = traceShot(p.pos, input.a, spread, w, p.team, targets, this.map, this.rng);
+    const result = traceShot(p.pos, input.a, spread, w, p.team, targets, this.map, this.rng, FRIENDLY_FIRE);
     this.emit({ e: 'shot', id: p.id, x: p.pos.x, y: p.pos.y, tx: result.end.x, ty: result.end.y, w: w.id });
 
     if (result.hit) {

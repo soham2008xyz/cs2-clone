@@ -343,8 +343,9 @@ export class HudScene extends Phaser.Scene {
 
   private onKill(k: { killer: string; victim: string; weapon: string; meKiller: boolean; meVictim: boolean }): void {
     const color = k.meKiller ? '#ffd76b' : k.meVictim ? '#ff6b6b' : '#dddddd';
+    const line = k.killer ? `${k.killer}  [${k.weapon}]  ${k.victim}` : `☠  [${k.weapon}]  ${k.victim}`;
     const t = this.add
-      .text(this.scale.width - 16, 16, `${k.killer}  [${k.weapon}]  ${k.victim}`, { fontFamily: MONO, fontSize: '13px', color })
+      .text(this.scale.width - 16, 16, line, { fontFamily: MONO, fontSize: '13px', color })
       .setOrigin(1, 0)
       .setShadow(1, 1, '#000', 2);
     this.killfeed.push({ text: t, until: this.time.now + 6000 });

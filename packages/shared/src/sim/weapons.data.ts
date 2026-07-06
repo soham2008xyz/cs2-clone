@@ -92,7 +92,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
     rangeMod: 0.98, range: 2600, auto: true,
   }),
   m4a4: def({
-    id: 'm4a4', name: 'M4A4', cls: 'rifle', team: 'CT', price: 2900, killReward: 300,
+    id: 'm4a4', name: 'M4A4', cls: 'rifle', team: 'CT', price: 3100, killReward: 300,
     damage: 33, armorPen: 0.7, rpm: 666, magazine: 30, reserve: 90, reloadSec: 3.1,
     mobility: 0.87, spreadBase: 0.009, spreadMove: 0.078, spreadPerShot: 0.012, spreadDecay: 0.45,
     rangeMod: 0.97, range: 2600, auto: true,

@@ -1,0 +1,205 @@
+import { describe, expect, it } from 'vitest';
+import type { WebSocket } from 'ws';
+import { BTN, MOLOTOV_DPS, TICK_DT, type GameEvent, type SnapshotMsg, type TeamId } from '@cs2d/shared';
+import { Room, type PlayerConn } from '../src/room.js';
+
+// Fast timings (seconds); sec() rounds to ticks: freeze=3, plant=6, defuse=12, roundEnd=6, bomb=60.
+const FAST = { freeze: 0.05, round: 5, bomb: 1, plant: 0.1, defuse: 0.2, defuseKit: 0.1, roundEnd: 0.1 };
+
+/** Private internals the tests poke at (TS `private` is compile-time only). */
+interface RoomInternals {
+  step(): void;
+  startRound(): void;
+  streaks: { T: number; CT: number };
+  fires: Map<number, { id: number; kind: string; pos: { x: number; y: number }; untilTick: number; ownerId: number; ownerTeam: TeamId }>;
+  activeNades: Map<number, { pos: { x: number; y: number }; vel: { x: number; y: number }; fuseTick: number }>;
+  bomb: { mode: string; pos: { x: number; y: number }; explodeTick: number };
+  phaseEndTick: number;
+  roundNumber: number;
+}
+
+const guts = (r: Room): RoomInternals => r as unknown as RoomInternals;
+const step = (r: Room, n = 1): void => {
+  for (let i = 0; i < n; i++) guts(r).step();
+};
+const stepUntil = (r: Room, cond: () => boolean, cap = 800): void => {
+  for (let i = 0; i < cap && !cond(); i++) guts(r).step();
+  if (!cond()) throw new Error('stepUntil: condition not reached');
+};
+
+/** Fake websocket that records every server message (for event assertions). */
+function fakeWs(): { msgs: Array<Record<string, unknown>>; ws: WebSocket } {
+  const msgs: Array<Record<string, unknown>> = [];
+  return { msgs, ws: { send: (raw: string) => msgs.push(JSON.parse(raw)) } as unknown as WebSocket };
+}
+
+const killEvents = (msgs: Array<Record<string, unknown>>): Array<Extract<GameEvent, { e: 'kill' }>> =>
+  msgs
+    .filter((m): m is Record<string, unknown> & SnapshotMsg => m.t === 's')
+    .flatMap((m) => m.ev ?? [])
+    .filter((ev): ev is Extract<GameEvent, { e: 'kill' }> => ev.e === 'kill');
+
+/** Per-room input feeder with automatic sequence numbers. */
+function feeder(room: Room) {
+  const seqs = new Map<number, number>();
+  return (id: number, b: number, extra: { a?: number; w?: number } = {}): void => {
+    const s = (seqs.get(id) ?? 0) + 1;
+    seqs.set(id, s);
+    room.handleInput(id, { t: 'i', s, b, a: extra.a ?? 0, ...(extra.w !== undefined ? { w: extra.w } : {}) });
+  };
+}
+
+function liveRoom(): { room: Room; send: ReturnType<typeof feeder> } {
+  const room = new Room('testarena', FAST);
+  return { room, send: feeder(room) };
+}
+
+const plantBomb = (room: Room, send: ReturnType<typeof feeder>, t: PlayerConn): void => {
+  t.pos = { ...room.map.siteCenters.A };
+  stepUntil(
+    room,
+    () => {
+      send(t.id, BTN.USE);
+      return room.phase === 'planted';
+    },
+    60,
+  );
+};
+
+describe('round flow', () => {
+  it('post-plant: killing all Ts does not end the round; the bomb resolves it', () => {
+    const { room, send } = liveRoom();
+    const t = room.addPlayer(null, 'T1', 'T');
+    room.addPlayer(null, 'CT1', 'CT');
+    stepUntil(room, () => room.phase === 'live');
+
+    expect(t.hasBomb).toBe(true); // sole T carries
+    plantBomb(room, send, t);
+
+    t.hp = 0;
+    t.alive = false;
+    step(room, 5);
+    expect(room.phase).toBe('planted'); // Ts dead, round still running
+
+    stepUntil(room, () => room.phase === 'round_end');
+    expect(room.score.T).toBe(1); // detonation = T win
+  });
+
+  it('defuse ends the round for CT and clears the bomb', () => {
+    const { room, send } = liveRoom();
+    const t = room.addPlayer(null, 'T1', 'T');
+    const ct = room.addPlayer(null, 'CT1', 'CT');
+    stepUntil(room, () => room.phase === 'live');
+    plantBomb(room, send, t);
+
+    ct.pos = { ...guts(room).bomb.pos };
+    stepUntil(
+      room,
+      () => {
+        send(ct.id, BTN.USE);
+        return room.phase === 'round_end';
+      },
+      60,
+    );
+    expect(room.score.CT).toBe(1);
+    expect(guts(room).bomb.mode).toBe('none'); // no lingering planted bomb on screen
+  });
+
+  it('losers still alive when time expires receive no loss bonus', () => {
+    const { room } = liveRoom();
+    const tAlive = room.addPlayer(null, 'T1', 'T');
+    const tDead = room.addPlayer(null, 'T2', 'T');
+    room.addPlayer(null, 'CT1', 'CT');
+    stepUntil(room, () => room.phase === 'live');
+
+    tDead.hp = 0;
+    tDead.alive = false;
+    const aliveMoney = tAlive.money;
+    const deadMoney = tDead.money;
+
+    guts(room).phaseEndTick = room.tick + 1; // expire the round timer now
+    stepUntil(room, () => room.phase === 'round_end', 10);
+
+    expect(tAlive.money).toBe(aliveMoney); // saved = $0
+    expect(tDead.money).toBe(deadMoney + 1400); // first-loss bonus
+  });
+
+  it('defuse kit is lost on death; loss streaks reset on pistol rounds', () => {
+    const { room } = liveRoom();
+    room.addPlayer(null, 'T1', 'T');
+    const ct = room.addPlayer(null, 'CT1', 'CT');
+    stepUntil(room, () => room.phase === 'live');
+
+    ct.hasKit = true;
+    ct.hp = 0;
+    ct.alive = false; // CT eliminated -> round ends, next round starts
+    stepUntil(room, () => room.phase === 'freeze' && guts(room).roundNumber === 2);
+    expect(ct.hasKit).toBe(false);
+
+    guts(room).roundNumber = 12;
+    guts(room).streaks = { T: 4, CT: 1 };
+    guts(room).startRound(); // halftime pistol (round 13)
+    expect(guts(room).streaks).toEqual({ T: 0, CT: 0 });
+  });
+});
+
+describe('utility friendly fire & attribution', () => {
+  it('HE spares teammates, damages enemies and self, credits the thrower', () => {
+    const { room, send } = liveRoom();
+    const wsRec = fakeWs();
+    const thrower = room.addPlayer(wsRec.ws, 'A', 'T');
+    const mate = room.addPlayer(null, 'B', 'T');
+    const victim = room.addPlayer(null, 'X', 'CT');
+    const bystander = room.addPlayer(null, 'Y', 'CT'); // keeps the round alive
+    stepUntil(room, () => room.phase === 'live');
+
+    thrower.pos = { x: 300, y: 150 };
+    mate.pos = { x: 330, y: 150 }; // dead center of the blast
+    victim.pos = { x: 360, y: 150 };
+    victim.hp = 5;
+    bystander.pos = { x: 700, y: 320 }; // outside HE radius
+
+    thrower.nades = ['he'];
+    send(thrower.id, 0, { w: 4 });
+    step(room, 1);
+    send(thrower.id, BTN.ATTACK);
+    step(room, 1);
+
+    const nade = [...guts(room).activeNades.values()][0];
+    expect(nade).toBeDefined();
+    nade.pos = { x: 330, y: 150 };
+    nade.vel = { x: 0, y: 0 };
+    nade.fuseTick = room.tick + 1;
+    const moneyBefore = thrower.money;
+    step(room, 3);
+
+    expect(mate.hp).toBe(100); // friendly fire off: teammate untouched
+    expect(thrower.hp).toBeLessThan(100); // self-damage stays (CS behavior)
+    expect(victim.alive).toBe(false);
+    expect(thrower.kills).toBe(1);
+    expect(thrower.money).toBe(moneyBefore + 300);
+
+    const kills = killEvents(wsRec.msgs);
+    expect(kills).toContainEqual({ e: 'kill', k: thrower.id, v: victim.id, w: 'he' });
+  });
+
+  it('fire spares the thrower team and never stacks across overlapping zones', () => {
+    const { room } = liveRoom();
+    const t = room.addPlayer(null, 'T1', 'T');
+    const ct = room.addPlayer(null, 'CT1', 'CT');
+    const owner = room.addPlayer(null, 'CT2', 'CT');
+    stepUntil(room, () => room.phase === 'live');
+
+    const pos = { x: 300, y: 150 };
+    t.pos = { ...pos };
+    ct.pos = { ...pos }; // non-owner teammate standing in the owner's fire
+    owner.pos = { x: 700, y: 320 }; // thrower, outside his own fire
+    const until = room.tick + 600;
+    guts(room).fires.set(101, { id: 101, kind: 'incendiary', pos: { ...pos }, untilTick: until, ownerId: owner.id, ownerTeam: 'CT' });
+    guts(room).fires.set(102, { id: 102, kind: 'incendiary', pos: { ...pos }, untilTick: until, ownerId: owner.id, ownerTeam: 'CT' });
+
+    step(room, 1);
+    expect(ct.hp).toBe(100); // FF off: teammate not burned
+    expect(t.hp).toBeCloseTo(100 - MOLOTOV_DPS * TICK_DT, 5); // exactly one zone's tick, not two
+  });
+});

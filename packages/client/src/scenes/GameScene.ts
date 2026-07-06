@@ -1,13 +1,15 @@
 import Phaser from 'phaser';
 import {
   BTN,
-  FLASH_MAX_BLIND,
   getMap,
   getWeapon,
+  GRENADES,
   PFLAG,
   TICK_MS,
   TICK_RATE,
   visibilityPolygon,
+  WEAPONS,
+  type GrenadeKind,
   type CompiledMap,
   type GameEvent,
   type GroundItem,
@@ -38,6 +40,12 @@ interface Tracer {
   tx: number;
   ty: number;
   until: number;
+}
+
+/** Killfeed label for any kill-event weapon id: guns, grenades, or the C4. */
+function weaponDisplayName(id: string): string {
+  if (id === 'c4') return 'C4';
+  return WEAPONS[id]?.name ?? GRENADES[id as GrenadeKind]?.name ?? id;
 }
 
 export class GameScene extends Phaser.Scene {
@@ -229,10 +237,10 @@ export class GameScene extends Phaser.Scene {
       }
       case 'kill':
         this.game.events.emit('hud:kill', {
-          killer: this.nameOf(ev.k),
+          killer: ev.k === 0 ? '' : this.nameOf(ev.k), // 0 = world (C4, unowned fire)
           victim: this.nameOf(ev.v),
-          weapon: getWeapon(ev.w).name,
-          meKiller: ev.k === this.myId,
+          weapon: weaponDisplayName(ev.w),
+          meKiller: ev.k !== 0 && ev.k === this.myId,
           meVictim: ev.v === this.myId,
         });
         break;

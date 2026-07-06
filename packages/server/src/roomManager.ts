@@ -21,9 +21,12 @@ export interface RoomListing {
   phase: string;
 }
 
+/** Grace period before an empty/bot-only room is reaped (covers create→join latency). */
+const REAP_GRACE_MS = 60000;
+
 /** Owns every live Room instance, keyed by a short join code. */
 export class RoomManager {
-  private rooms = new Map<string, { room: Room; meta: RoomMeta }>();
+  private rooms = new Map<string, { room: Room; meta: RoomMeta; createdAt: number }>();
 
   create(map: string, backfillBots: boolean, timings: Partial<RoomTimings> = {}): RoomMeta {
     let code = genCode();
@@ -31,7 +34,7 @@ export class RoomManager {
     const room = new Room(map, timings);
     room.start();
     const meta: RoomMeta = { code, map, backfillBots };
-    this.rooms.set(code, { room, meta });
+    this.rooms.set(code, { room, meta, createdAt: Date.now() });
     return meta;
   }
 
@@ -45,10 +48,15 @@ export class RoomManager {
       .map(({ room, meta }) => ({ code: meta.code, map: meta.map, players: room.players.size, phase: room.phase }));
   }
 
-  /** Stops and drops rooms nobody is connected to (call periodically). */
+  /**
+   * Stops and drops rooms with no human connections (empty or bots-only, e.g.
+   * after backfill replaced every leaver). The grace window keeps freshly
+   * created rooms alive until their creator's websocket join lands.
+   */
   reap(): void {
-    for (const [code, { room }] of this.rooms) {
-      if (room.players.size === 0) {
+    for (const [code, { room, createdAt }] of this.rooms) {
+      const hasHuman = [...room.players.values()].some((p) => p.ws !== null);
+      if (!hasHuman && Date.now() - createdAt > REAP_GRACE_MS) {
         room.stop();
         this.rooms.delete(code);
       }
