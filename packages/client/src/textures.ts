@@ -111,3 +111,27 @@ export function generatePlayerTexture(scene: Phaser.Scene, key: string, color: n
 }
 
 export const TEAM_COLORS = { T: 0xd9a33c, CT: 0x4a7fd4 } as const;
+
+/** C4 bomb (dropped/planted) and ground weapon marker. */
+export function generateObjectTextures(scene: Phaser.Scene): void {
+  if (!scene.textures.exists('bomb')) {
+    const g = scene.make.graphics({ x: 0, y: 0 }, false);
+    g.fillStyle(0x2b2b23, 1);
+    g.fillRoundedRect(2, 4, 20, 14, 3);
+    g.fillStyle(0x8a8570, 1);
+    g.fillRect(4, 6, 7, 10);
+    g.fillStyle(0xff3333, 1);
+    g.fillCircle(17, 8, 2.4);
+    g.generateTexture('bomb', 24, 22);
+    g.destroy();
+  }
+  if (!scene.textures.exists('grounditem')) {
+    const g = scene.make.graphics({ x: 0, y: 0 }, false);
+    g.fillStyle(0x333333, 0.9);
+    g.fillRoundedRect(0, 6, 26, 8, 2);
+    g.fillStyle(0x555555, 1);
+    g.fillRect(4, 4, 4, 6);
+    g.generateTexture('grounditem', 26, 18);
+    g.destroy();
+  }
+}

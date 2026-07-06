@@ -8,6 +8,8 @@ import {
   visibilityPolygon,
   type CompiledMap,
   type GameEvent,
+  type GroundItem,
+  type MatchSnap,
   type RosterEntry,
   type SelfState,
   type TeamId,
@@ -52,10 +54,16 @@ export class GameScene extends Phaser.Scene {
   private darkness!: Phaser.GameObjects.Graphics;
   private tracerGfx!: Phaser.GameObjects.Graphics;
   private tracers: Tracer[] = [];
-  private keys!: Record<'W' | 'A' | 'S' | 'D' | 'SHIFT' | 'R' | 'ONE' | 'TWO' | 'THREE', Phaser.Input.Keyboard.Key>;
+  private keys!: Record<'W' | 'A' | 'S' | 'D' | 'SHIFT' | 'R' | 'E' | 'ONE' | 'TWO' | 'THREE', Phaser.Input.Keyboard.Key>;
   private pendingSlot: number | undefined;
   private accumulator = 0;
   private statusText!: Phaser.GameObjects.Text;
+  private match: MatchSnap | null = null;
+  private bombSprite!: Phaser.GameObjects.Sprite;
+  private itemSprites = new Map<number, Phaser.GameObjects.Sprite>();
+  private groundItems: GroundItem[] = [];
+  private spectateIndex = 0;
+  private spectateTarget = -1;
 
   constructor() {
     super('Game');
@@ -87,10 +95,15 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.setZoom(1.25);
     this.cameras.main.centerOn(this.map.widthPx / 2, this.map.heightPx / 2);
 
-    this.keys = this.input.keyboard!.addKeys('W,A,S,D,SHIFT,R,ONE,TWO,THREE') as GameScene['keys'];
+    this.keys = this.input.keyboard!.addKeys('W,A,S,D,SHIFT,R,E,ONE,TWO,THREE') as GameScene['keys'];
     this.input.keyboard!.on('keydown-ONE', () => (this.pendingSlot = 1));
     this.input.keyboard!.on('keydown-TWO', () => (this.pendingSlot = 2));
     this.input.keyboard!.on('keydown-THREE', () => (this.pendingSlot = 3));
+    this.input.keyboard!.on('keydown-SPACE', () => this.spectateIndex++);
+    this.game.events.on('buy', this.onBuy, this);
+    this.events.once('shutdown', () => this.game.events.off('buy', this.onBuy, this));
+
+    this.bombSprite = this.add.sprite(-100, -100, 'bomb').setDepth(8).setVisible(false);
 
     this.statusText = this.add
       .text(this.map.widthPx / 2, this.map.heightPx / 2, 'connecting…', {
@@ -114,17 +127,28 @@ export class GameScene extends Phaser.Scene {
       this.buffer.push(msg);
       this.lastServerTick = msg.k;
       if (msg.me) this.me = msg.me;
+      this.match = msg.m ?? null;
+      this.groundItems = msg.g ?? [];
       const self = msg.p.find(([id]) => id === this.myId);
       if (self) {
         this.myHp = self[4];
         this.alive = (self[5] & PFLAG.ALIVE) !== 0;
-        if (!this.spawned) {
+        const canMove = this.alive && this.match?.ph !== 'freeze';
+        if (!this.spawned || (self[1] !== 0 && Math.hypot(self[1] - this.predictor.pos.x, self[2] - this.predictor.pos.y) > 200)) {
+          // first snapshot or teleport (round start respawn): snap hard
           this.predictor.pos = { x: self[1], y: self[2] };
+          this.predictor.reconcile({ x: self[1], y: self[2] }, msg.a, false);
           this.spawned = true;
         } else {
-          this.predictor.reconcile({ x: self[1], y: self[2] }, msg.a, this.alive);
+          this.predictor.reconcile({ x: self[1], y: self[2] }, msg.a, canMove);
         }
-        this.game.events.emit('hud:self', { hp: this.myHp, alive: this.alive, me: this.me });
+        this.game.events.emit('hud:self', {
+          hp: this.myHp,
+          alive: this.alive,
+          me: this.me,
+          team: this.myTeam,
+          match: this.match,
+        });
       }
       for (const ev of msg.ev ?? []) this.handleEvent(ev);
     };
@@ -166,19 +190,57 @@ export class GameScene extends Phaser.Scene {
       case 'hurt':
         this.game.events.emit('hud:hurt', ev.d);
         break;
+      case 'exploded': {
+        // screen shake + flash at the bomb site
+        this.cameras.main.shake(400, 0.01);
+        const boom = this.add.circle(ev.x, ev.y, 40, 0xffcc66, 0.9).setDepth(30);
+        this.tweens.add({ targets: boom, radius: 320, alpha: 0, duration: 550, onComplete: () => boom.destroy() });
+        this.game.events.emit('hud:banner', { text: 'THE BOMB HAS EXPLODED', color: '#ffb066', ttl: 3500 });
+        break;
+      }
+      case 'planted':
+        this.game.events.emit('hud:banner', { text: 'THE BOMB HAS BEEN PLANTED', color: '#ff8866', ttl: 3500 });
+        break;
+      case 'defused':
+        this.game.events.emit('hud:banner', { text: 'BOMB DEFUSED', color: '#7db8ff', ttl: 3500 });
+        break;
+      case 'round_start':
+        this.game.events.emit('hud:banner', { text: `ROUND ${ev.rn}`, color: '#ffffff', ttl: 2000 });
+        break;
+      case 'round_end': {
+        const label = ev.winner === 'T' ? 'TERRORISTS WIN' : 'COUNTER-TERRORISTS WIN';
+        const color = ev.winner === 'T' ? '#ffd280' : '#9cc4ff';
+        this.game.events.emit('hud:banner', { text: label, color, ttl: 5000 });
+        break;
+      }
+      case 'swap':
+        this.game.events.emit('hud:banner', { text: 'SWITCHING SIDES', color: '#ffffff', ttl: 4000 });
+        break;
+      case 'match_end': {
+        const label = ev.winner === 'T' ? 'TERRORISTS WIN THE MATCH' : 'COUNTER-TERRORISTS WIN THE MATCH';
+        this.game.events.emit('hud:banner', { text: label, color: '#ffe680', ttl: 12000 });
+        break;
+      }
     }
+  }
+
+  private onBuy(item: string): void {
+    this.conn.send({ t: 'buy', item });
   }
 
   private applyRoster(entries: RosterEntry[]): void {
     this.roster = new Map(entries.map((e) => [e.id, e]));
     if (this.roster.has(this.myId)) this.myTeam = this.roster.get(this.myId)!.team;
     for (const [id, e] of this.entities) {
-      if (!this.roster.has(id)) {
+      const entry = this.roster.get(id);
+      // gone, or side-swapped: rebuild the entity with the right texture/layer
+      if (!entry || entry.team !== e.team) {
         e.sprite.destroy();
         e.label.destroy();
         this.entities.delete(id);
       }
     }
+    this.game.events.emit('hud:roster', entries);
   }
 
   private ensureEntity(id: number): Entity | null {
@@ -216,11 +278,13 @@ export class GameScene extends Phaser.Scene {
       if (this.keys.D.isDown) buttons |= BTN.RIGHT;
       if (this.keys.SHIFT.isDown) buttons |= BTN.WALK;
       if (this.keys.R.isDown) buttons |= BTN.RELOAD;
+      if (this.keys.E.isDown) buttons |= BTN.USE;
       if (this.input.activePointer.isDown) buttons |= BTN.ATTACK;
       const mobility = this.me ? getWeapon(this.me.weapon).mobility : 1;
+      const canMove = this.alive && this.match?.ph !== 'freeze';
       const input = this.predictor.buildInput(buttons, aim, this.lastServerTick, this.pendingSlot);
       this.pendingSlot = undefined;
-      this.predictor.applyLocal(input, this.alive, mobility);
+      this.predictor.applyLocal(input, canMove, mobility);
       this.conn.send(input);
     }
 
@@ -234,7 +298,6 @@ export class GameScene extends Phaser.Scene {
       const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
       me.sprite.setRotation(Math.atan2(world.y - this.predictor.pos.y, world.x - this.predictor.pos.x));
       me.label.setPosition(this.predictor.pos.x, this.predictor.pos.y);
-      if (!this.cameras.main.deadzone) this.cameras.main.startFollow(me.sprite, true, 0.15, 0.15);
     }
 
     // remote entities
@@ -251,8 +314,66 @@ export class GameScene extends Phaser.Scene {
       e.label.setPosition(state.x, state.y);
     }
 
-    // vision polygon from predicted position
-    const poly = visibilityPolygon(this.predictor.pos, this.map);
+    // camera: follow self while alive, otherwise spectate a living teammate
+    let visionOrigin = this.predictor.pos;
+    if (this.alive || this.match?.ph === 'waiting') {
+      if (me && this.spectateTarget !== this.myId) {
+        this.cameras.main.startFollow(me.sprite, true, 0.15, 0.15);
+        this.spectateTarget = this.myId;
+        this.game.events.emit('hud:spectate', null);
+      }
+    } else {
+      const mates = [...sampled.entries()].filter(
+        ([id, s]) => id !== this.myId && this.roster.get(id)?.team === this.myTeam && (s.flags & PFLAG.ALIVE) !== 0,
+      );
+      if (mates.length > 0) {
+        const [targetId] = mates[this.spectateIndex % mates.length];
+        const target = this.entities.get(targetId);
+        if (target && this.spectateTarget !== targetId) {
+          this.cameras.main.startFollow(target.sprite, true, 0.12, 0.12);
+          this.spectateTarget = targetId;
+          this.game.events.emit('hud:spectate', this.nameOf(targetId));
+        }
+        const st = sampled.get(targetId)!;
+        visionOrigin = { x: st.x, y: st.y };
+      }
+    }
+
+    // bomb rendering (dropped or planted)
+    if (this.match?.bomb) {
+      const [bx, by, planted] = this.match.bomb;
+      this.bombSprite.setVisible(true).setPosition(bx, by);
+      if (planted === 1) {
+        const blink = Math.floor(this.time.now / 350) % 2 === 0;
+        this.bombSprite.setTint(blink ? 0xff4444 : 0xffffff);
+      } else {
+        this.bombSprite.clearTint();
+      }
+    } else {
+      this.bombSprite.setVisible(false);
+    }
+
+    // ground weapons
+    const seen = new Set<number>();
+    for (const [itemId, weaponId, x, y] of this.groundItems) {
+      seen.add(itemId);
+      let s = this.itemSprites.get(itemId);
+      if (!s) {
+        s = this.add.sprite(x, y, 'grounditem').setDepth(7);
+        this.itemSprites.set(itemId, s);
+      }
+      s.setPosition(x, y);
+      void weaponId;
+    }
+    for (const [itemId, s] of this.itemSprites) {
+      if (!seen.has(itemId)) {
+        s.destroy();
+        this.itemSprites.delete(itemId);
+      }
+    }
+
+    // vision polygon from the camera's subject
+    const poly = visibilityPolygon(visionOrigin, this.map);
     this.visionGfx.clear();
     this.visionGfx.fillStyle(0xffffff, 1);
     this.visionGfx.beginPath();

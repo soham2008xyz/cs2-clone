@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { generatePlayerTexture, generateTileset, TEAM_COLORS } from '../textures.js';
+import { generateObjectTextures, generatePlayerTexture, generateTileset, TEAM_COLORS } from '../textures.js';
 
 /**
  * Generates baseline procedural textures, then opportunistically loads Kenney
@@ -12,6 +12,7 @@ export class BootScene extends Phaser.Scene {
 
   preload(): void {
     generateTileset(this);
+    generateObjectTextures(this);
     generatePlayerTexture(this, 'player_T_fallback', TEAM_COLORS.T);
     generatePlayerTexture(this, 'player_CT_fallback', TEAM_COLORS.CT);
 

@@ -58,19 +58,46 @@ export interface SelfState {
   slot: number; // 1 primary, 2 secondary, 3 knife
   weapon: string;
   reload: number; // ticks until reload completes (0 = not reloading)
+  bomb?: 1; // carrying the bomb
+  kit?: 1; // has defuse kit
+  buy?: 1; // buying currently allowed
 }
 
 export type GameEvent =
   | { e: 'shot'; id: number; x: number; y: number; tx: number; ty: number; w: string }
   | { e: 'hit'; id: number; target: number; d: number } // shooter feedback
   | { e: 'hurt'; d: number; from: number } // victim feedback (only sent to victim)
-  | { e: 'kill'; k: number; v: number; w: string };
+  | { e: 'kill'; k: number; v: number; w: string }
+  | { e: 'round_start'; rn: number }
+  | { e: 'round_end'; winner: TeamId; reason: string }
+  | { e: 'planted'; x: number; y: number }
+  | { e: 'defused' }
+  | { e: 'exploded'; x: number; y: number }
+  | { e: 'swap' } // side swap (halftime / OT half)
+  | { e: 'match_end'; winner: TeamId };
+
+export type MatchPhase = 'waiting' | 'freeze' | 'live' | 'planted' | 'round_end' | 'match_end';
+
+export interface MatchSnap {
+  ph: MatchPhase;
+  end: number; // ticks until the phase ends (bomb timer while planted)
+  rn: number; // round number (1-based)
+  st: number; // score of current T side
+  sct: number; // score of current CT side
+  bomb?: [number, number, 0 | 1]; // x, y, 0 = dropped, 1 = planted
+  prog?: number; // own plant/defuse progress 0..1
+}
+
+/** Dropped weapon on the ground: [itemId, weaponId, x, y] */
+export type GroundItem = [number, string, number, number];
 
 export interface SnapshotMsg {
   t: 's';
   k: number; // server tick
   a: number; // last processed input seq for the receiving client
   p: PlayerSnap[];
+  m?: MatchSnap;
+  g?: GroundItem[];
   me?: SelfState;
   ev?: GameEvent[];
 }
@@ -79,6 +106,8 @@ export interface RosterEntry {
   id: number;
   name: string;
   team: TeamId;
+  k: number; // kills
+  d: number; // deaths
 }
 
 export interface WelcomeMsg {

@@ -1,27 +1,54 @@
 import type { WebSocket } from 'ws';
 import {
   applyArmor,
+  BOMB_TIME,
   BTN,
+  BUY_WINDOW,
+  BUYZONE_RADIUS_TILES,
   buttonsToMove,
+  clampMoney,
   DEFAULT_PISTOL,
+  DEFUSE_TIME,
+  DEFUSE_TIME_KIT,
+  dist,
   encode,
+  FREEZE_TIME,
   getMap,
   getWeapon,
+  isOvertimeHalfStart,
+  isPistolRound,
+  isSideSwap,
+  matchWinner,
   MAX_HP,
   mulberry32,
+  OT_MONEY,
   PFLAG,
+  PICKUP_RADIUS,
+  PLANT_REWARD,
+  PLANT_TIME,
+  PRICE_DEFUSE_KIT,
+  PRICE_KEVLAR,
+  ROUND_END_TIME,
+  ROUND_TIME,
+  roundPayout,
   SNAPSHOT_RATE,
   START_MONEY,
   stepMovement,
   TICK_DT,
   TICK_RATE,
+  TILE_SIZE,
   traceShot,
   type CombatTarget,
   type CompiledMap,
   type GameEvent,
+  type GroundItem,
   type InputMsg,
+  type LossStreaks,
+  type MatchPhase,
+  type MatchSnap,
   type PlayerSnap,
   type RosterEntry,
+  type RoundEndReason,
   type SelfState,
   type TeamId,
   type Vec2,
@@ -31,7 +58,34 @@ import { LagCompensator } from './lagcomp.js';
 
 const SNAPSHOT_EVERY = Math.round(TICK_RATE / SNAPSHOT_RATE);
 const MAX_QUEUED_INPUTS = 8;
-const RESPAWN_TICKS = 5 * TICK_RATE; // Phase 3 test mode; replaced by rounds in Phase 4
+const WARMUP_RESPAWN_TICKS = 3 * TICK_RATE;
+const MATCH_END_TICKS = 15 * TICK_RATE;
+const BOMB_EXPLOSION_RADIUS = 350;
+const BOMB_EXPLOSION_DAMAGE = 300;
+const DEFUSE_RADIUS = 56;
+
+const sec = (s: number): number => Math.round(s * TICK_RATE);
+
+/** Round timings in seconds — overridable for fast integration tests. */
+export interface RoomTimings {
+  freeze: number;
+  round: number;
+  bomb: number;
+  plant: number;
+  defuse: number;
+  defuseKit: number;
+  roundEnd: number;
+}
+
+const DEFAULT_TIMINGS: RoomTimings = {
+  freeze: FREEZE_TIME,
+  round: ROUND_TIME,
+  bomb: BOMB_TIME,
+  plant: PLANT_TIME,
+  defuse: DEFUSE_TIME,
+  defuseKit: DEFUSE_TIME_KIT,
+  roundEnd: ROUND_END_TIME,
+};
 
 export interface WeaponSlot {
   id: string;
@@ -50,20 +104,30 @@ export interface PlayerConn {
   armor: number;
   money: number;
   alive: boolean;
+  hasBomb: boolean;
+  hasKit: boolean;
   primary: WeaponSlot | null;
   secondary: WeaponSlot | null;
   activeSlot: 1 | 2 | 3;
-  reloadEndTick: number; // 0 = not reloading
+  reloadEndTick: number;
   nextShotTick: number;
-  bloom: number; // accumulated recoil spread
+  bloom: number;
   buttons: number;
   prevButtons: number;
   lastSeq: number;
   lastSeenTick?: number;
   inputQueue: InputMsg[];
-  respawnTick: number;
+  respawnTick: number; // warmup only
+  actionStartTick: number; // plant/defuse progress (0 = none)
   kills: number;
   deaths: number;
+}
+
+interface BombState {
+  mode: 'none' | 'carried' | 'dropped' | 'planted';
+  pos: Vec2;
+  carrierId: number;
+  explodeTick: number;
 }
 
 const slotOf = (p: PlayerConn): WeaponSlot | null =>
@@ -78,14 +142,29 @@ export class Room {
   readonly map: CompiledMap;
   readonly players = new Map<number, PlayerConn>();
   tick = 0;
+
+  phase: MatchPhase = 'waiting';
+  phaseEndTick = 0;
+  roundNumber = 0;
+  score: Record<TeamId, number> = { T: 0, CT: 0 };
+  private streaks: LossStreaks = { T: 0, CT: 0 };
+  private bomb: BombState = { mode: 'none', pos: { x: 0, y: 0 }, carrierId: 0, explodeTick: 0 };
+  private bombWasPlanted = false;
+  private liveStartTick = 0;
+  private groundItems = new Map<number, { weaponId: string; pos: Vec2; ammo: number; reserve: number }>();
+  private nextItemId = 1;
+
   private nextId = 1;
   private timer: ReturnType<typeof setInterval> | null = null;
   private rng = mulberry32(0xc0ffee);
   private lagComp = new LagCompensator();
   private events: Array<{ ev: GameEvent; to?: number }> = [];
 
-  constructor(mapName: string) {
+  readonly times: RoomTimings;
+
+  constructor(mapName: string, timings: Partial<RoomTimings> = {}) {
     this.map = getMap(mapName);
+    this.times = { ...DEFAULT_TIMINGS, ...timings };
   }
 
   start(): void {
@@ -98,6 +177,8 @@ export class Room {
     this.timer = null;
   }
 
+  // ── players ───────────────────────────────────────────────────────────────
+
   private pickTeam(requested?: TeamId): TeamId {
     if (requested) return requested;
     let t = 0;
@@ -106,20 +187,16 @@ export class Room {
     return t <= ct ? 'T' : 'CT';
   }
 
-  private spawnPos(team: TeamId): Vec2 {
+  private spawnPos(team: TeamId, index: number): Vec2 {
     const spawns = this.map.spawns[team];
-    const used = [...this.players.values()].filter((p) => p.team === team).length;
-    return { ...spawns[used % spawns.length] };
+    return { ...spawns[index % spawns.length] };
   }
 
-  /** Phase 3 test loadout: rifle + pistol. Phase 4 replaces with the buy system. */
-  private giveLoadout(p: PlayerConn): void {
-    const rifleId = p.team === 'T' ? 'ak47' : 'm4a4';
-    const rifle = getWeapon(rifleId);
+  private givePistolLoadout(p: PlayerConn): void {
     const pistol = getWeapon(DEFAULT_PISTOL[p.team]);
-    p.primary = { id: rifle.id, ammo: rifle.magazine, reserve: rifle.reserve };
+    p.primary = null;
     p.secondary = { id: pistol.id, ammo: pistol.magazine, reserve: pistol.reserve };
-    p.activeSlot = 1;
+    p.activeSlot = 2;
   }
 
   addPlayer(ws: WebSocket | null, name: string, requestedTeam?: TeamId): PlayerConn {
@@ -129,15 +206,17 @@ export class Room {
       ws,
       name: name.slice(0, 24) || 'Player',
       team,
-      pos: this.spawnPos(team),
+      pos: { x: 0, y: 0 },
       aim: 0,
       hp: MAX_HP,
       armor: 0,
       money: START_MONEY,
       alive: true,
+      hasBomb: false,
+      hasKit: false,
       primary: null,
       secondary: null,
-      activeSlot: 1,
+      activeSlot: 2,
       reloadEndTick: 0,
       nextShotTick: 0,
       bloom: 0,
@@ -146,17 +225,27 @@ export class Room {
       lastSeq: 0,
       inputQueue: [],
       respawnTick: 0,
+      actionStartTick: 0,
       kills: 0,
       deaths: 0,
     };
-    this.giveLoadout(player);
+    this.givePistolLoadout(player);
+    const teamCount = [...this.players.values()].filter((q) => q.team === team).length;
+    player.pos = this.spawnPos(team, teamCount);
     this.players.set(player.id, player);
     ws?.send(encode({ t: 'welcome', id: player.id, map: this.map.def.name, tick: this.tick }));
     this.broadcastRoster();
+
+    // mid-round joiners wait dead until next round (except warmup)
+    if (this.phase !== 'waiting' && this.phase !== 'freeze') {
+      player.alive = false;
+    }
     return player;
   }
 
   removePlayer(id: number): void {
+    const p = this.players.get(id);
+    if (p?.hasBomb) this.dropBomb(p);
     this.players.delete(id);
     this.broadcastRoster();
   }
@@ -173,7 +262,321 @@ export class Room {
     this.events.push({ ev, to });
   }
 
-  // ── weapon handling ──────────────────────────────────────────────────────
+  private teamPlayers(team: TeamId): PlayerConn[] {
+    return [...this.players.values()].filter((p) => p.team === team);
+  }
+
+  private aliveCount(team: TeamId): number {
+    return this.teamPlayers(team).filter((p) => p.alive).length;
+  }
+
+  // ── buy system ────────────────────────────────────────────────────────────
+
+  private buyingAllowed(p: PlayerConn): boolean {
+    if (!p.alive) return false;
+    if (this.phase === 'freeze') return this.inBuyzone(p);
+    if (this.phase === 'live' && this.tick < this.liveStartTick + sec(BUY_WINDOW)) return this.inBuyzone(p);
+    return false;
+  }
+
+  private inBuyzone(p: PlayerConn): boolean {
+    const r = BUYZONE_RADIUS_TILES * TILE_SIZE;
+    return this.map.spawns[p.team].some((s) => dist(s, p.pos) <= r);
+  }
+
+  handleBuy(id: number, item: string): void {
+    const p = this.players.get(id);
+    if (!p || !this.buyingAllowed(p)) return;
+
+    if (item === 'kevlar') {
+      if (p.money < PRICE_KEVLAR || p.armor >= 100) return;
+      p.money -= PRICE_KEVLAR;
+      p.armor = 100;
+      return;
+    }
+    if (item === 'kit') {
+      if (p.team !== 'CT' || p.hasKit || p.money < PRICE_DEFUSE_KIT) return;
+      p.money -= PRICE_DEFUSE_KIT;
+      p.hasKit = true;
+      return;
+    }
+
+    const w = getWeapon(item.replace(/[^a-z0-9]/g, ''));
+    if (w.cls === 'knife') return;
+    if (w.team && w.team !== p.team) return;
+    if (p.money < w.price) return;
+
+    p.money -= w.price;
+    const slot: WeaponSlot = { id: w.id, ammo: w.magazine, reserve: w.reserve };
+    if (w.cls === 'pistol') {
+      p.secondary = slot;
+      p.activeSlot = 2;
+    } else {
+      if (p.primary) this.dropWeapon(p, p.primary); // replace = drop old
+      p.primary = slot;
+      p.activeSlot = 1;
+    }
+    p.reloadEndTick = 0;
+  }
+
+  // ── ground items & bomb ───────────────────────────────────────────────────
+
+  private dropWeapon(p: PlayerConn, slot: WeaponSlot): void {
+    this.groundItems.set(this.nextItemId++, {
+      weaponId: slot.id,
+      pos: { x: p.pos.x, y: p.pos.y },
+      ammo: slot.ammo,
+      reserve: slot.reserve,
+    });
+  }
+
+  private tryPickup(p: PlayerConn): void {
+    if (p.primary) return;
+    for (const [itemId, item] of this.groundItems) {
+      if (dist(item.pos, p.pos) > PICKUP_RADIUS) continue;
+      const w = getWeapon(item.weaponId);
+      if (w.cls === 'pistol') continue; // only primaries drop
+      p.primary = { id: item.weaponId, ammo: item.ammo, reserve: item.reserve };
+      p.activeSlot = 1;
+      this.groundItems.delete(itemId);
+      return;
+    }
+  }
+
+  private dropBomb(p: PlayerConn): void {
+    if (!p.hasBomb) return;
+    p.hasBomb = false;
+    this.bomb = { mode: 'dropped', pos: { x: p.pos.x, y: p.pos.y }, carrierId: 0, explodeTick: 0 };
+  }
+
+  private bombPickupCheck(): void {
+    if (this.bomb.mode !== 'dropped') return;
+    for (const p of this.players.values()) {
+      if (p.team !== 'T' || !p.alive) continue;
+      if (dist(p.pos, this.bomb.pos) <= PICKUP_RADIUS) {
+        p.hasBomb = true;
+        this.bomb = { mode: 'carried', pos: p.pos, carrierId: p.id, explodeTick: 0 };
+        return;
+      }
+    }
+  }
+
+  // ── plant / defuse ───────────────────────────────────────────────────────
+
+  private updatePlantDefuse(p: PlayerConn, input: InputMsg): void {
+    const using = (input.b & BTN.USE) !== 0;
+    const moving = (input.b & (BTN.UP | BTN.DOWN | BTN.LEFT | BTN.RIGHT)) !== 0;
+
+    // pick up dropped primaries with USE
+    if (using && p.alive) this.tryPickup(p);
+
+    // planting
+    if (p.team === 'T' && p.hasBomb && this.phase === 'live') {
+      const onSite = this.map.siteAt(p.pos.x, p.pos.y) !== null;
+      if (using && onSite && !moving && p.alive) {
+        if (p.actionStartTick === 0) p.actionStartTick = this.tick;
+        if (this.tick - p.actionStartTick >= sec(this.times.plant)) this.plantBomb(p);
+      } else {
+        p.actionStartTick = 0;
+      }
+      return;
+    }
+
+    // defusing
+    if (p.team === 'CT' && this.phase === 'planted') {
+      const nearBomb = dist(p.pos, this.bomb.pos) <= DEFUSE_RADIUS;
+      if (using && nearBomb && !moving && p.alive) {
+        if (p.actionStartTick === 0) p.actionStartTick = this.tick;
+        const needed = sec(p.hasKit ? this.times.defuseKit : this.times.defuse);
+        if (this.tick - p.actionStartTick >= needed) this.defuseBomb();
+      } else {
+        p.actionStartTick = 0;
+      }
+      return;
+    }
+
+    p.actionStartTick = 0;
+  }
+
+  private plantBomb(p: PlayerConn): void {
+    p.hasBomb = false;
+    p.actionStartTick = 0;
+    p.money = clampMoney(p.money + PLANT_REWARD);
+    this.bomb = { mode: 'planted', pos: { x: p.pos.x, y: p.pos.y }, carrierId: 0, explodeTick: this.tick + sec(this.times.bomb) };
+    this.bombWasPlanted = true;
+    this.phase = 'planted';
+    this.phaseEndTick = this.bomb.explodeTick;
+    this.emit({ e: 'planted', x: this.bomb.pos.x, y: this.bomb.pos.y });
+  }
+
+  private defuseBomb(): void {
+    for (const p of this.players.values()) p.actionStartTick = 0;
+    this.emit({ e: 'defused' });
+    this.endRound('bomb_defused');
+  }
+
+  private explodeBomb(): void {
+    this.emit({ e: 'exploded', x: this.bomb.pos.x, y: this.bomb.pos.y });
+    for (const p of this.players.values()) {
+      if (!p.alive) continue;
+      const d = dist(p.pos, this.bomb.pos);
+      if (d > BOMB_EXPLOSION_RADIUS) continue;
+      const raw = BOMB_EXPLOSION_DAMAGE * (1 - d / BOMB_EXPLOSION_RADIUS);
+      const { hpDamage, armor } = applyArmor(raw, p.armor, 0.6);
+      p.armor = armor;
+      p.hp -= hpDamage;
+      if (p.hp <= 0) {
+        p.hp = 0;
+        p.alive = false;
+        p.deaths++;
+      }
+    }
+    this.bomb.mode = 'none';
+    this.endRound('bomb_exploded');
+  }
+
+  // ── round lifecycle ───────────────────────────────────────────────────────
+
+  private startMatch(): void {
+    this.score = { T: 0, CT: 0 };
+    this.streaks = { T: 0, CT: 0 };
+    this.roundNumber = 0;
+    for (const p of this.players.values()) {
+      p.money = START_MONEY;
+      p.kills = 0;
+      p.deaths = 0;
+      p.armor = 0;
+      p.hasKit = false;
+      p.primary = null;
+    }
+    this.startRound();
+  }
+
+  private startRound(): void {
+    this.roundNumber++;
+
+    if (isSideSwap(this.roundNumber)) {
+      for (const p of this.players.values()) {
+        p.team = p.team === 'T' ? 'CT' : 'T';
+      }
+      const { T, CT } = this.score;
+      this.score = { T: CT, CT: T };
+      const s = this.streaks;
+      this.streaks = { T: s.CT, CT: s.T };
+      this.emit({ e: 'swap' });
+      this.broadcastRoster();
+    }
+
+    const freshEconomy = isPistolRound(this.roundNumber) || isOvertimeHalfStart(this.roundNumber);
+    const otMoney = isOvertimeHalfStart(this.roundNumber);
+
+    this.groundItems.clear();
+    this.bomb = { mode: 'none', pos: { x: 0, y: 0 }, carrierId: 0, explodeTick: 0 };
+    this.bombWasPlanted = false;
+
+    const byTeam: Record<TeamId, number> = { T: 0, CT: 0 };
+    for (const p of this.players.values()) {
+      const survived = p.alive;
+      p.alive = true;
+      p.hp = MAX_HP;
+      p.hasBomb = false;
+      p.bloom = 0;
+      p.reloadEndTick = 0;
+      p.actionStartTick = 0;
+      p.respawnTick = 0;
+      p.pos = this.spawnPos(p.team, byTeam[p.team]++);
+      if (freshEconomy) {
+        p.money = otMoney ? OT_MONEY : START_MONEY;
+        p.armor = 0;
+        p.hasKit = false;
+        p.primary = null;
+        this.givePistolLoadout(p);
+      } else if (!survived) {
+        p.primary = null;
+        p.hasKit = p.team === 'CT' ? p.hasKit : false;
+        this.givePistolLoadout(p);
+      } else {
+        // survivors keep weapons; make sure the pistol matches the (possibly swapped) side
+        if (!p.secondary) this.givePistolLoadout(p);
+        p.activeSlot = p.primary ? 1 : 2;
+      }
+      if (p.team === 'T') p.hasKit = false;
+    }
+
+    // hand the bomb to a random T
+    const ts = this.teamPlayers('T');
+    if (ts.length > 0) {
+      const carrier = ts[Math.floor(this.rng() * ts.length)];
+      carrier.hasBomb = true;
+      this.bomb = { mode: 'carried', pos: carrier.pos, carrierId: carrier.id, explodeTick: 0 };
+    }
+
+    this.phase = 'freeze';
+    this.phaseEndTick = this.tick + sec(this.times.freeze);
+    this.emit({ e: 'round_start', rn: this.roundNumber });
+    this.broadcastRoster();
+  }
+
+  private endRound(reason: RoundEndReason): void {
+    const { winner, winnerMoney, loserMoney, streaks } = roundPayout(reason, this.streaks, this.bombWasPlanted);
+    this.streaks = streaks;
+    this.score[winner]++;
+
+    for (const p of this.players.values()) {
+      p.money = clampMoney(p.money + (p.team === winner ? winnerMoney : loserMoney));
+      p.actionStartTick = 0;
+    }
+
+    this.emit({ e: 'round_end', winner, reason });
+    this.phase = 'round_end';
+    this.phaseEndTick = this.tick + sec(this.times.roundEnd);
+    this.broadcastRoster();
+  }
+
+  private afterRoundEnd(): void {
+    const winner = matchWinner(this.score);
+    if (winner) {
+      this.emit({ e: 'match_end', winner });
+      this.phase = 'match_end';
+      this.phaseEndTick = this.tick + MATCH_END_TICKS;
+      return;
+    }
+    this.startRound();
+  }
+
+  private resetToWarmup(): void {
+    this.phase = 'waiting';
+    this.roundNumber = 0;
+    this.score = { T: 0, CT: 0 };
+    this.bomb.mode = 'none';
+    this.groundItems.clear();
+    const byTeam: Record<TeamId, number> = { T: 0, CT: 0 };
+    for (const p of this.players.values()) {
+      p.alive = true;
+      p.hp = MAX_HP;
+      p.hasBomb = false;
+      p.money = START_MONEY;
+      p.armor = 0;
+      p.primary = null;
+      this.givePistolLoadout(p);
+      p.pos = this.spawnPos(p.team, byTeam[p.team]++);
+    }
+    this.broadcastRoster();
+  }
+
+  private checkWinConditions(): void {
+    if (this.phase === 'live') {
+      if (this.teamPlayers('T').length > 0 && this.aliveCount('T') === 0) return this.endRound('elimination_ct');
+      if (this.teamPlayers('CT').length > 0 && this.aliveCount('CT') === 0) return this.endRound('elimination_t');
+      if (this.tick >= this.phaseEndTick) return this.endRound('time');
+    } else if (this.phase === 'planted') {
+      // Ts dying does NOT end the round — the bomb must be resolved
+      if (this.teamPlayers('CT').length > 0 && this.aliveCount('CT') === 0) return this.endRound('elimination_t');
+      if (this.tick >= this.bomb.explodeTick) return this.explodeBomb();
+    }
+  }
+
+  // ── weapons (unchanged core from phase 3) ────────────────────────────────
 
   private startReload(p: PlayerConn): void {
     const slot = slotOf(p);
@@ -199,17 +602,15 @@ export class Room {
     if (slot === 2 && !p.secondary) return;
     if (slot < 1 || slot > 3) return;
     p.activeSlot = slot as 1 | 2 | 3;
-    p.reloadEndTick = 0; // switching cancels reload
-    const w = activeWeapon(p);
+    p.reloadEndTick = 0;
     p.nextShotTick = Math.max(p.nextShotTick, this.tick + Math.round(0.25 * TICK_RATE));
-    void w;
   }
 
   private tryFire(p: PlayerConn, input: InputMsg): void {
+    if (this.phase === 'freeze') return;
     const w = activeWeapon(p);
     const slot = slotOf(p);
     if (this.tick < p.nextShotTick || p.reloadEndTick > 0) return;
-    // semi-auto requires a fresh press
     if (!w.auto && (p.prevButtons & BTN.ATTACK) !== 0) return;
     if (slot && slot.ammo <= 0) {
       this.startReload(p);
@@ -224,7 +625,6 @@ export class Room {
     const spread = w.spreadBase + (moving && !walking ? w.spreadMove : 0) + p.bloom;
     p.bloom = Math.min(0.12, p.bloom + w.spreadPerShot);
 
-    // lag-compensated target positions
     const rewound = this.lagComp.rewind(p.lastSeenTick, this.tick);
     const targets: CombatTarget[] = [];
     for (const other of this.players.values()) {
@@ -253,10 +653,22 @@ export class Room {
     victim.hp = 0;
     victim.alive = false;
     victim.deaths++;
-    victim.respawnTick = this.tick + RESPAWN_TICKS;
+    victim.actionStartTick = 0;
     killer.kills++;
-    killer.money = Math.min(16000, killer.money + weapon.killReward);
+    killer.money = clampMoney(killer.money + weapon.killReward);
     this.emit({ e: 'kill', k: killer.id, v: victim.id, w: weapon.id });
+
+    // drop primary + bomb where they died
+    if (victim.primary) {
+      this.dropWeapon(victim, victim.primary);
+      victim.primary = null;
+    }
+    if (victim.hasBomb) this.dropBomb(victim);
+
+    if (this.phase === 'waiting') {
+      victim.respawnTick = this.tick + WARMUP_RESPAWN_TICKS;
+    }
+    this.broadcastRoster();
   }
 
   // ── main loop ────────────────────────────────────────────────────────────
@@ -264,16 +676,38 @@ export class Room {
   private step(): void {
     this.tick++;
 
+    // phase transitions driven by time
+    if (this.phase === 'waiting') {
+      if (this.teamPlayers('T').length > 0 && this.teamPlayers('CT').length > 0) {
+        this.startMatch();
+      }
+    } else if (this.phase === 'freeze' && this.tick >= this.phaseEndTick) {
+      this.phase = 'live';
+      this.liveStartTick = this.tick;
+      this.phaseEndTick = this.tick + sec(this.times.round);
+    } else if (this.phase === 'round_end' && this.tick >= this.phaseEndTick) {
+      this.afterRoundEnd();
+    } else if (this.phase === 'match_end' && this.tick >= this.phaseEndTick) {
+      this.resetToWarmup();
+    }
+
+    // abandoned match guard
+    if (this.phase !== 'waiting' && this.phase !== 'match_end') {
+      if (this.teamPlayers('T').length === 0 || this.teamPlayers('CT').length === 0) {
+        this.resetToWarmup();
+      }
+    }
+
+    const canMove = this.phase !== 'freeze';
+
     for (const p of this.players.values()) {
-      // Phase 3 test respawns (rounds replace this in Phase 4)
-      if (!p.alive && p.respawnTick > 0 && this.tick >= p.respawnTick) {
+      if (this.phase === 'waiting' && !p.alive && p.respawnTick > 0 && this.tick >= p.respawnTick) {
         p.alive = true;
         p.hp = MAX_HP;
-        p.armor = 0;
         p.bloom = 0;
         p.respawnTick = 0;
-        p.pos = this.spawnPos(p.team);
-        this.giveLoadout(p);
+        p.pos = this.spawnPos(p.team, Math.floor(this.rng() * 10));
+        this.givePistolLoadout(p);
       }
 
       if (p.reloadEndTick > 0 && this.tick >= p.reloadEndTick) {
@@ -290,17 +724,24 @@ export class Room {
         if (p.alive) {
           if (input.w) this.switchSlot(p, input.w);
           if (input.b & BTN.RELOAD) this.startReload(p);
-          p.pos = stepMovement(p.pos, buttonsToMove(input.b), activeWeapon(p).mobility, this.map, TICK_DT);
+          if (canMove) {
+            p.pos = stepMovement(p.pos, buttonsToMove(input.b), activeWeapon(p).mobility, this.map, TICK_DT);
+          }
           if (input.b & BTN.ATTACK) this.tryFire(p, input);
+          this.updatePlantDefuse(p, input);
         }
         p.prevButtons = input.b;
         p.buttons = input.b;
       }
 
-      // recoil bloom decay
+      if (p.hasBomb) this.bomb.pos = p.pos;
+
       const w = activeWeapon(p);
       if (w.spreadDecay > 0) p.bloom = Math.max(0, p.bloom - w.spreadDecay * TICK_DT);
     }
+
+    this.bombPickupCheck();
+    this.checkWinConditions();
 
     this.lagComp.record(this.tick, this.players.values());
     if (this.tick % SNAPSHOT_EVERY === 0) this.broadcastSnapshot();
@@ -315,6 +756,8 @@ export class Room {
       if (p.alive) flags |= PFLAG.ALIVE;
       if ((p.buttons & BTN.WALK) !== 0) flags |= PFLAG.WALKING;
       if (p.reloadEndTick > 0) flags |= PFLAG.RELOADING;
+      if (p.hasBomb) flags |= PFLAG.HAS_BOMB;
+      if (p.actionStartTick > 0) flags |= p.team === 'T' ? PFLAG.PLANTING : PFLAG.DEFUSING;
       snaps.push([
         p.id,
         Math.round(p.pos.x * 10) / 10,
@@ -328,9 +771,26 @@ export class Room {
     return snaps;
   }
 
+  private matchSnap(p: PlayerConn): MatchSnap {
+    const m: MatchSnap = {
+      ph: this.phase,
+      end: Math.max(0, this.phaseEndTick - this.tick),
+      rn: this.roundNumber,
+      st: this.score.T,
+      sct: this.score.CT,
+    };
+    if (this.bomb.mode === 'dropped') m.bomb = [this.bomb.pos.x, this.bomb.pos.y, 0];
+    if (this.bomb.mode === 'planted') m.bomb = [this.bomb.pos.x, this.bomb.pos.y, 1];
+    if (p.actionStartTick > 0) {
+      const total = p.team === 'T' ? sec(this.times.plant) : sec(p.hasKit ? this.times.defuseKit : this.times.defuse);
+      m.prog = Math.min(1, (this.tick - p.actionStartTick) / total);
+    }
+    return m;
+  }
+
   private selfState(p: PlayerConn): SelfState {
     const slot = slotOf(p);
-    return {
+    const s: SelfState = {
       ammo: slot?.ammo ?? 0,
       reserve: slot?.reserve ?? 0,
       armor: p.armor,
@@ -339,17 +799,31 @@ export class Room {
       weapon: activeWeapon(p).id,
       reload: p.reloadEndTick > 0 ? p.reloadEndTick - this.tick : 0,
     };
+    if (p.hasBomb) s.bomb = 1;
+    if (p.hasKit) s.kit = 1;
+    if (this.buyingAllowed(p)) s.buy = 1;
+    return s;
   }
 
   private broadcastSnapshot(): void {
     const players = this.snapPlayers();
+    const items: GroundItem[] = [...this.groundItems.entries()].map(([id, it]) => [id, it.weaponId, Math.round(it.pos.x), Math.round(it.pos.y)]);
     const events = this.events;
     this.events = [];
     for (const p of this.players.values()) {
       if (!p.ws) continue;
       const ev = events.filter((e) => e.to === undefined || e.to === p.id).map((e) => e.ev);
       p.ws.send(
-        encode({ t: 's', k: this.tick, a: p.lastSeq, p: players, me: this.selfState(p), ...(ev.length ? { ev } : {}) }),
+        encode({
+          t: 's',
+          k: this.tick,
+          a: p.lastSeq,
+          p: players,
+          m: this.matchSnap(p),
+          ...(items.length ? { g: items } : {}),
+          me: this.selfState(p),
+          ...(ev.length ? { ev } : {}),
+        }),
       );
     }
   }
@@ -359,6 +833,8 @@ export class Room {
       id: p.id,
       name: p.name,
       team: p.team,
+      k: p.kills,
+      d: p.deaths,
     }));
     for (const p of this.players.values()) {
       p.ws?.send(encode({ t: 'roster', players: roster }));

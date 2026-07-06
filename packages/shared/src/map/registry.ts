@@ -1,5 +1,6 @@
 import { compileMap } from './compile.js';
 import { DUST2 } from './dust2.js';
+import { TEST_ARENA } from './testarena.js';
 import type { CompiledMap, MapDef } from './types.js';
 
 const defs = new Map<string, MapDef>();
@@ -25,3 +26,4 @@ export function listMaps(): string[] {
 }
 
 registerMap(DUST2);
+registerMap(TEST_ARENA);
