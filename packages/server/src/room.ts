@@ -218,6 +218,7 @@ export class Room {
   private activeNades = new Map<number, ActiveNade>();
   private smokes = new Map<number, SmokeZone>();
   private fires = new Map<number, FireZone>();
+  private fireVersion = 0;
   private nextNadeId = 1;
   private nextZoneId = 1;
   private bots = new Map<number, BotController>();
@@ -352,6 +353,17 @@ export class Room {
   get smokeOccluders(): Occluder[] {
     return [...this.smokes.values()].map((s) => ({ pos: s.pos, radius: this.smokeRadius(s) }));
   }
+
+  /** Active fire patches + a version counter so bots know when to repath around them. */
+  get fireInfo(): { version: number; zones: Array<{ pos: Vec2; radius: number }> } {
+    return {
+      version: this.fireVersion,
+      zones: [...this.fires.values()].map((f) => ({ pos: f.pos, radius: MOLOTOV_RADIUS })),
+    };
+  }
+
+  /** CT-bot shared info: last site the bomb carrier was spotted heading toward. */
+  botIntel: { site: 'A' | 'B'; tick: number } | null = null;
 
   addBot(team?: TeamId, difficulty: BotDifficulty = 'normal'): PlayerConn {
     const p = this.addPlayer(null, `Bot_${this.nextBotName++}`, team);
@@ -631,6 +643,8 @@ export class Room {
     this.activeNades.clear();
     this.smokes.clear();
     this.fires.clear();
+    this.fireVersion++;
+    this.botIntel = null;
     this.bomb = { mode: 'none', pos: { x: 0, y: 0 }, carrierId: 0, explodeTick: 0 };
     this.bombWasPlanted = false;
 
@@ -866,6 +880,7 @@ export class Room {
       case 'incendiary': {
         const id = this.nextZoneId++;
         this.fires.set(id, { id, kind: n.kind, pos: { ...n.pos }, untilTick: this.tick + sec(MOLOTOV_DURATION), ownerId: n.ownerId, ownerTeam: n.ownerTeam });
+        this.fireVersion++;
         this.emit({ e: 'molotov_ignite', x: n.pos.x, y: n.pos.y });
         break;
       }
@@ -898,6 +913,7 @@ export class Room {
     for (const [id, f] of this.fires) {
       if (this.tick >= f.untilTick) {
         this.fires.delete(id);
+        this.fireVersion++;
         continue;
       }
       for (const p of this.players.values()) {

@@ -69,5 +69,10 @@ export function compileMap(def: MapDef): CompiledMap {
       }
       return null;
     },
+    utilitySpots: (def.utilitySpots ?? []).map((s) => ({
+      kind: s.kind,
+      site: s.site,
+      pos: { x: (s.tx + 0.5) * TILE_SIZE, y: (s.ty + 0.5) * TILE_SIZE },
+    })),
   };
 }

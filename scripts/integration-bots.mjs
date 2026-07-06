@@ -49,7 +49,7 @@ async function main() {
   const { code: roomCode } = await createRes.json();
   ok(`created room ${roomCode} (dust2)`);
 
-  let state = { roster: [], match: null, rounds: [] };
+  let state = { roster: [], match: null, rounds: [], nadeThrows: 0 };
   ws = new WebSocket(`ws://localhost:${PORT}?room=${roomCode}`);
   await new Promise((resolve, reject) => {
     ws.on('open', () => {
@@ -65,6 +65,7 @@ async function main() {
       state.match = msg.m;
       for (const ev of msg.ev ?? []) {
         if (ev.e === 'round_end') state.rounds.push(ev);
+        if (ev.e === 'nade_throw') state.nadeThrows++;
       }
     }
   });
@@ -95,6 +96,10 @@ async function main() {
   const tWins = state.rounds.filter((r) => r.winner === 'T').length;
   const ctWins = state.rounds.filter((r) => r.winner === 'CT').length;
   console.log(`  T wins: ${tWins}, CT wins: ${ctWins} (over ${state.rounds.length} rounds)`);
+
+  // bots buy utility from round 2 on and throw it at map anchors while executing
+  if (state.nadeThrows === 0) return fail('no bot threw any utility over the observed rounds');
+  ok(`bots threw utility ${state.nadeThrows} time(s) at map anchors`);
 
   console.log('\nALL BOT INTEGRATION CHECKS PASSED');
   cleanup();

@@ -83,6 +83,13 @@ function buildDust2(): MapDef {
   b.buyzone('T', 20, 46, 16, 9); // within T spawn (x14-45, y45-55)
   b.buyzone('CT', 44, 4, 14, 9); // full CT spawn (x44-57, y4-12)
 
+  // Utility anchors: chokes bots smoke/flash while executing toward a site
+  b.utilitySpot('smoke', 'A', 37, 20); // top mid / xbox (cuts CT mid vision)
+  b.utilitySpot('smoke', 'A', 73, 34); // long doors
+  b.utilitySpot('flash', 'A', 55, 15); // over A short plaza
+  b.utilitySpot('smoke', 'B', 25, 11); // B doors
+  b.utilitySpot('flash', 'B', 10, 12); // into B site from tunnels
+
   b.callout('B Site', 10, 12)
     .callout('B Doors', 25, 11)
     .callout('CT Mid', 37, 12)

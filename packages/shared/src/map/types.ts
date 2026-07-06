@@ -29,6 +29,14 @@ export interface BuyZone {
   h: number;
 }
 
+/** Bot utility anchor: throw `kind` at this tile when executing toward `site`. */
+export interface UtilitySpot {
+  kind: 'smoke' | 'flash';
+  site: 'A' | 'B';
+  tx: number;
+  ty: number;
+}
+
 export interface MapDef {
   name: string;
   displayName: string;
@@ -37,6 +45,8 @@ export interface MapDef {
   callouts: Callout[];
   /** authored buy areas; maps without them fall back to a spawn-radius rule */
   buyzones?: BuyZone[];
+  /** choke anchors bots throw utility at while executing */
+  utilitySpots?: UtilitySpot[];
 }
 
 /** Precomputed, gameplay-ready form of a MapDef. */
@@ -57,4 +67,6 @@ export interface CompiledMap {
   siteCenters: Record<'A' | 'B', Vec2>;
   /** which team may buy at a px position (null = nobody; see MapDef.buyzones) */
   buyzoneAt(x: number, y: number): TeamId | null;
+  /** utility anchors in world px (compiled from MapDef.utilitySpots) */
+  utilitySpots: Array<{ kind: 'smoke' | 'flash'; site: 'A' | 'B'; pos: Vec2 }>;
 }

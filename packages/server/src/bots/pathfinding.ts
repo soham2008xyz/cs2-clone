@@ -29,17 +29,21 @@ const NEIGHBORS: Array<[number, number, number]> = [
 
 const MAX_ITERATIONS = 20000;
 
+export type BlockedFn = (tx: number, ty: number) => boolean;
+
 /**
  * A* over the walkable tile grid (8-directional, no corner-cutting through
  * two orthogonal walls). Returns tile-center waypoints from just after the
  * start to the goal, or [] if unreachable / already on the goal tile.
+ * `isBlocked` widens solidity with dynamic hazards (e.g. fire zones).
  */
-export function findPath(map: CompiledMap, startPx: Vec2, goalPx: Vec2): Vec2[] {
+export function findPath(map: CompiledMap, startPx: Vec2, goalPx: Vec2, isBlocked?: BlockedFn): Vec2[] {
+  const blocked = isBlocked ?? map.isSolid;
   const stx = Math.floor(startPx.x / TILE_SIZE);
   const sty = Math.floor(startPx.y / TILE_SIZE);
   const gtx = Math.floor(goalPx.x / TILE_SIZE);
   const gty = Math.floor(goalPx.y / TILE_SIZE);
-  if (map.isSolid(gtx, gty) || (stx === gtx && sty === gty)) return [];
+  if (blocked(gtx, gty) || (stx === gtx && sty === gty)) return [];
 
   const nodes = new Map<number, NodeRec>();
   const startKey = nodeKey(stx, sty);
@@ -71,8 +75,8 @@ export function findPath(map: CompiledMap, startPx: Vec2, goalPx: Vec2): Vec2[] 
     for (const [dx, dy, cost] of NEIGHBORS) {
       const ntx = cur.tx + dx;
       const nty = cur.ty + dy;
-      if (map.isSolid(ntx, nty)) continue;
-      if (dx !== 0 && dy !== 0 && (map.isSolid(cur.tx + dx, cur.ty) || map.isSolid(cur.tx, cur.ty + dy))) continue;
+      if (blocked(ntx, nty)) continue;
+      if (dx !== 0 && dy !== 0 && (blocked(cur.tx + dx, cur.ty) || blocked(cur.tx, cur.ty + dy))) continue;
 
       const nk = nodeKey(ntx, nty);
       if (closed.has(nk)) continue;
@@ -98,17 +102,17 @@ export function findPath(map: CompiledMap, startPx: Vec2, goalPx: Vec2): Vec2[] 
   return path;
 }
 
-function hasDirectLine(map: CompiledMap, a: Vec2, b: Vec2): boolean {
+function hasDirectLine(map: CompiledMap, a: Vec2, b: Vec2, isBlocked?: BlockedFn): boolean {
   const dx = b.x - a.x;
   const dy = b.y - a.y;
   const d = Math.hypot(dx, dy);
   if (d === 0) return true;
   const dir = { x: dx / d, y: dy / d };
-  return raycastGrid(a, dir, d, TILE_SIZE, map.isSolid) >= d - 1;
+  return raycastGrid(a, dir, d, TILE_SIZE, isBlocked ?? map.isSolid) >= d - 1;
 }
 
 /** Shortcuts waypoints with direct LOS from the current position — cuts zigzag from grid-snapped A*. */
-export function smoothPath(map: CompiledMap, fromPx: Vec2, path: Vec2[]): Vec2[] {
+export function smoothPath(map: CompiledMap, fromPx: Vec2, path: Vec2[], isBlocked?: BlockedFn): Vec2[] {
   if (path.length <= 1) return path;
   const out: Vec2[] = [];
   let cursor = fromPx;
@@ -116,7 +120,7 @@ export function smoothPath(map: CompiledMap, fromPx: Vec2, path: Vec2[]): Vec2[]
   while (i < path.length) {
     let farthest = i;
     for (let j = path.length - 1; j > i; j--) {
-      if (hasDirectLine(map, cursor, path[j])) {
+      if (hasDirectLine(map, cursor, path[j], isBlocked)) {
         farthest = j;
         break;
       }

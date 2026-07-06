@@ -1,4 +1,4 @@
-import { CH, type BuyZone, type Callout, type MapDef, type TeamId } from './types.js';
+import { CH, type BuyZone, type Callout, type MapDef, type TeamId, type UtilitySpot } from './types.js';
 
 /**
  * Authoring tool: start from all-walls, carve out rooms and corridors, then
@@ -8,6 +8,7 @@ export class MapBuilder {
   private cells: string[][];
   private callouts: Callout[] = [];
   private buyzones: BuyZone[] = [];
+  private utilitySpots: UtilitySpot[] = [];
 
   constructor(
     public readonly width: number,
@@ -62,6 +63,12 @@ export class MapBuilder {
     return this;
   }
 
+  /** Anchor tile where bots executing toward `site` throw `kind` utility. */
+  utilitySpot(kind: 'smoke' | 'flash', site: 'A' | 'B', tx: number, ty: number): this {
+    this.utilitySpots.push({ kind, site, tx, ty });
+    return this;
+  }
+
   build(name: string, displayName: string): MapDef {
     return {
       name,
@@ -69,6 +76,7 @@ export class MapBuilder {
       grid: this.cells.map((row) => row.join('')),
       callouts: this.callouts,
       ...(this.buyzones.length ? { buyzones: this.buyzones } : {}),
+      ...(this.utilitySpots.length ? { utilitySpots: this.utilitySpots } : {}),
     };
   }
 }
