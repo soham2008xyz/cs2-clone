@@ -12,5 +12,7 @@ export * from './sim/weapons.data.js';
 export * from './sim/combat.js';
 export * from './sim/economy.js';
 export * from './sim/match.js';
+export * from './sim/grenades.data.js';
+export * from './sim/grenades.js';
 export * from './sim/vision.js';
 export * from './net/protocol.js';

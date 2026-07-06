@@ -55,12 +55,14 @@ export interface SelfState {
   reserve: number;
   armor: number;
   money: number;
-  slot: number; // 1 primary, 2 secondary, 3 knife
+  slot: number; // 1 primary, 2 secondary, 3 knife, 4 grenade
   weapon: string;
   reload: number; // ticks until reload completes (0 = not reloading)
   bomb?: 1; // carrying the bomb
   kit?: 1; // has defuse kit
   buy?: 1; // buying currently allowed
+  nades?: string[]; // owned grenade ids, throw order
+  blind?: number; // ticks of blindness remaining
 }
 
 export type GameEvent =
@@ -74,7 +76,12 @@ export type GameEvent =
   | { e: 'defused' }
   | { e: 'exploded'; x: number; y: number }
   | { e: 'swap' } // side swap (halftime / OT half)
-  | { e: 'match_end'; winner: TeamId };
+  | { e: 'match_end'; winner: TeamId }
+  | { e: 'nade_throw'; kind: string; x: number; y: number }
+  | { e: 'he_pop'; x: number; y: number }
+  | { e: 'flash_pop'; x: number; y: number }
+  | { e: 'smoke_pop'; x: number; y: number }
+  | { e: 'molotov_ignite'; x: number; y: number };
 
 export type MatchPhase = 'waiting' | 'freeze' | 'live' | 'planted' | 'round_end' | 'match_end';
 
@@ -91,6 +98,12 @@ export interface MatchSnap {
 /** Dropped weapon on the ground: [itemId, weaponId, x, y] */
 export type GroundItem = [number, string, number, number];
 
+/** In-flight grenade: [id, kind, x, y] */
+export type NadeSnap = [number, string, number, number];
+
+/** Active effect zone (smoke cloud or fire patch): [id, kind, x, y, radius, ticksLeft] */
+export type ZoneSnap = [number, 'smoke' | 'fire', number, number, number, number];
+
 export interface SnapshotMsg {
   t: 's';
   k: number; // server tick
@@ -98,6 +111,8 @@ export interface SnapshotMsg {
   p: PlayerSnap[];
   m?: MatchSnap;
   g?: GroundItem[];
+  n?: NadeSnap[];
+  z?: ZoneSnap[];
   me?: SelfState;
   ev?: GameEvent[];
 }

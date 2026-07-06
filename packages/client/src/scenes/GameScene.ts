@@ -1,18 +1,22 @@
 import Phaser from 'phaser';
 import {
   BTN,
+  FLASH_MAX_BLIND,
   getMap,
   getWeapon,
   PFLAG,
   TICK_MS,
+  TICK_RATE,
   visibilityPolygon,
   type CompiledMap,
   type GameEvent,
   type GroundItem,
   type MatchSnap,
+  type NadeSnap,
   type RosterEntry,
   type SelfState,
   type TeamId,
+  type ZoneSnap,
 } from '@cs2d/shared';
 import { playerTexture } from './BootScene.js';
 import { Connection, serverUrl } from '../net/connection.js';
@@ -54,7 +58,7 @@ export class GameScene extends Phaser.Scene {
   private darkness!: Phaser.GameObjects.Graphics;
   private tracerGfx!: Phaser.GameObjects.Graphics;
   private tracers: Tracer[] = [];
-  private keys!: Record<'W' | 'A' | 'S' | 'D' | 'SHIFT' | 'R' | 'E' | 'ONE' | 'TWO' | 'THREE', Phaser.Input.Keyboard.Key>;
+  private keys!: Record<'W' | 'A' | 'S' | 'D' | 'SHIFT' | 'R' | 'E' | 'ONE' | 'TWO' | 'THREE' | 'FOUR', Phaser.Input.Keyboard.Key>;
   private pendingSlot: number | undefined;
   private accumulator = 0;
   private statusText!: Phaser.GameObjects.Text;
@@ -62,6 +66,10 @@ export class GameScene extends Phaser.Scene {
   private bombSprite!: Phaser.GameObjects.Sprite;
   private itemSprites = new Map<number, Phaser.GameObjects.Sprite>();
   private groundItems: GroundItem[] = [];
+  private nadeSprites = new Map<number, Phaser.GameObjects.Arc>();
+  private nades: NadeSnap[] = [];
+  private zones: ZoneSnap[] = [];
+  private zoneGfx!: Phaser.GameObjects.Graphics;
   private spectateIndex = 0;
   private spectateTarget = -1;
 
@@ -95,15 +103,17 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.setZoom(1.25);
     this.cameras.main.centerOn(this.map.widthPx / 2, this.map.heightPx / 2);
 
-    this.keys = this.input.keyboard!.addKeys('W,A,S,D,SHIFT,R,E,ONE,TWO,THREE') as GameScene['keys'];
+    this.keys = this.input.keyboard!.addKeys('W,A,S,D,SHIFT,R,E,ONE,TWO,THREE,FOUR') as GameScene['keys'];
     this.input.keyboard!.on('keydown-ONE', () => (this.pendingSlot = 1));
     this.input.keyboard!.on('keydown-TWO', () => (this.pendingSlot = 2));
     this.input.keyboard!.on('keydown-THREE', () => (this.pendingSlot = 3));
+    this.input.keyboard!.on('keydown-FOUR', () => (this.pendingSlot = 4));
     this.input.keyboard!.on('keydown-SPACE', () => this.spectateIndex++);
     this.game.events.on('buy', this.onBuy, this);
     this.events.once('shutdown', () => this.game.events.off('buy', this.onBuy, this));
 
     this.bombSprite = this.add.sprite(-100, -100, 'bomb').setDepth(8).setVisible(false);
+    this.zoneGfx = this.add.graphics().setDepth(6);
 
     this.statusText = this.add
       .text(this.map.widthPx / 2, this.map.heightPx / 2, 'connecting…', {
@@ -129,6 +139,8 @@ export class GameScene extends Phaser.Scene {
       if (msg.me) this.me = msg.me;
       this.match = msg.m ?? null;
       this.groundItems = msg.g ?? [];
+      this.nades = msg.n ?? [];
+      this.zones = msg.z ?? [];
       const self = msg.p.find(([id]) => id === this.myId);
       if (self) {
         this.myHp = self[4];
@@ -221,6 +233,20 @@ export class GameScene extends Phaser.Scene {
         this.game.events.emit('hud:banner', { text: label, color: '#ffe680', ttl: 12000 });
         break;
       }
+      case 'he_pop': {
+        const boom = this.add.circle(ev.x, ev.y, 20, 0xffcc66, 0.85).setDepth(30);
+        this.tweens.add({ targets: boom, radius: 130, alpha: 0, duration: 350, onComplete: () => boom.destroy() });
+        if (Math.hypot(ev.x - this.predictor.pos.x, ev.y - this.predictor.pos.y) < 250) this.cameras.main.shake(180, 0.006);
+        break;
+      }
+      case 'flash_pop': {
+        const pop = this.add.circle(ev.x, ev.y, 10, 0xffffff, 0.95).setDepth(30);
+        this.tweens.add({ targets: pop, radius: 40, alpha: 0, duration: 250, onComplete: () => pop.destroy() });
+        break;
+      }
+      case 'smoke_pop':
+      case 'molotov_ignite':
+        break; // rendered continuously from the zone snapshot instead
     }
   }
 
@@ -372,8 +398,45 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    // vision polygon from the camera's subject
-    const poly = visibilityPolygon(visionOrigin, this.map);
+    // in-flight grenades
+    const seenNades = new Set<number>();
+    for (const [nadeId, kind, x, y] of this.nades) {
+      seenNades.add(nadeId);
+      let s = this.nadeSprites.get(nadeId);
+      if (!s) {
+        const color = kind === 'flash' ? 0xdddddd : kind === 'smoke' ? 0x999999 : kind === 'he' ? 0x556b2f : 0x8b3a1a;
+        s = this.add.circle(x, y, 5, color).setDepth(9).setStrokeStyle(1, 0x000000, 0.6);
+        this.nadeSprites.set(nadeId, s);
+      }
+      s.setPosition(x, y);
+    }
+    for (const [nadeId, s] of this.nadeSprites) {
+      if (!seenNades.has(nadeId)) {
+        s.destroy();
+        this.nadeSprites.delete(nadeId);
+      }
+    }
+
+    // smoke / fire zones
+    const smokeOccluders = this.zones.filter((z) => z[1] === 'smoke').map((z) => ({ pos: { x: z[2], y: z[3] }, radius: z[4] }));
+    this.zoneGfx.clear();
+    for (const [, kind, x, y, radius] of this.zones) {
+      if (kind === 'smoke') {
+        this.zoneGfx.fillStyle(0xcfcfcf, 0.92);
+        this.zoneGfx.fillCircle(x, y, radius);
+        this.zoneGfx.lineStyle(2, 0xb0b0b0, 0.5);
+        this.zoneGfx.strokeCircle(x, y, radius);
+      } else {
+        const flicker = 0.75 + 0.15 * Math.sin(this.time.now / 90 + x);
+        this.zoneGfx.fillStyle(0xff6a1a, 0.55 * flicker);
+        this.zoneGfx.fillCircle(x, y, radius);
+        this.zoneGfx.fillStyle(0xffcc55, 0.45 * flicker);
+        this.zoneGfx.fillCircle(x, y, radius * 0.55);
+      }
+    }
+
+    // vision polygon from the camera's subject (smoke blocks LOS same as walls)
+    const poly = visibilityPolygon(visionOrigin, this.map, smokeOccluders);
     this.visionGfx.clear();
     this.visionGfx.fillStyle(0xffffff, 1);
     this.visionGfx.beginPath();

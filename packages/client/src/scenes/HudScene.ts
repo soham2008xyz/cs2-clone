@@ -1,7 +1,11 @@
 import Phaser from 'phaser';
 import {
+  FLASH_MAX_BLIND,
+  getGrenade,
+  GRENADES,
   PRICE_DEFUSE_KIT,
   PRICE_KEVLAR,
+  TICK_RATE,
   WEAPONS,
   type MatchSnap,
   type RosterEntry,
@@ -41,6 +45,8 @@ export class HudScene extends Phaser.Scene {
   private hitmarker!: Phaser.GameObjects.Graphics;
   private hitmarkerUntil = 0;
   private hurtOverlay!: Phaser.GameObjects.Rectangle;
+  private blindOverlay!: Phaser.GameObjects.Rectangle;
+  private nadeText!: Phaser.GameObjects.Text;
   private killfeed: KillEntry[] = [];
   private buyPanel!: Phaser.GameObjects.Container;
   private buyOpen = false;
@@ -55,11 +61,13 @@ export class HudScene extends Phaser.Scene {
   create(): void {
     const style = { fontFamily: MONO, fontSize: '18px', color: '#ffffff' };
 
-    this.hurtOverlay = this.add.rectangle(0, 0, this.scale.width * 2, this.scale.height * 2, 0xaa0000, 0).setOrigin(0);
+    this.hurtOverlay = this.add.rectangle(0, 0, this.scale.width * 2, this.scale.height * 2, 0xaa0000, 0).setOrigin(0).setDepth(90);
+    this.blindOverlay = this.add.rectangle(0, 0, this.scale.width * 2, this.scale.height * 2, 0xffffff, 0).setOrigin(0).setDepth(95);
 
     this.hpText = this.add.text(16, 0, '', { ...style, fontSize: '22px' }).setShadow(1, 1, '#000', 2);
     this.ammoText = this.add.text(0, 0, '', { ...style, fontSize: '22px' }).setOrigin(1, 0).setShadow(1, 1, '#000', 2);
     this.weaponText = this.add.text(0, 0, '', { ...style, color: '#c9c9c9', fontSize: '14px' }).setOrigin(1, 0).setShadow(1, 1, '#000', 2);
+    this.nadeText = this.add.text(0, 0, '', { ...style, color: '#dddddd', fontSize: '13px' }).setOrigin(1, 0).setShadow(1, 1, '#000', 2);
     this.moneyText = this.add.text(16, 0, '', { ...style, color: '#8fd18f', fontSize: '16px' }).setShadow(1, 1, '#000', 2);
     this.timerText = this.add.text(0, 10, '', { ...style, fontSize: '24px' }).setOrigin(0.5, 0).setShadow(1, 1, '#000', 3);
     this.scoreText = this.add.text(0, 40, '', { ...style, fontSize: '15px' }).setOrigin(0.5, 0).setShadow(1, 1, '#000', 2);
@@ -108,6 +116,7 @@ export class HudScene extends Phaser.Scene {
     this.hpText.setPosition(16, h - 40);
     this.ammoText.setPosition(w - 16, h - 40);
     this.weaponText.setPosition(w - 16, h - 64);
+    this.nadeText.setPosition(w - 16, h - 84);
     this.moneyText.setPosition(16, h - 64);
     this.timerText.setX(w / 2);
     this.scoreText.setX(w / 2);
@@ -132,6 +141,10 @@ export class HudScene extends Phaser.Scene {
     }
     items.push({ id: 'kevlar', label: 'Kevlar', price: PRICE_KEVLAR });
     if (team === 'CT') items.push({ id: 'kit', label: 'Defuse Kit', price: PRICE_DEFUSE_KIT });
+    for (const g of Object.values(GRENADES)) {
+      if (g.team && g.team !== team) continue;
+      items.push({ id: g.id, label: g.name, price: g.price });
+    }
 
     const rowH = 30;
     const width = 300;
@@ -217,11 +230,25 @@ export class HudScene extends Phaser.Scene {
     this.hpText.setText(alive ? `♥ ${Math.max(0, hp)}${me && me.armor > 0 ? `  ⛨ ${me.armor}` : ''}` : '');
     if (me) {
       this.moneyText.setText(`$ ${me.money}${me.buy ? '  [B] BUY' : ''}`);
-      if (me.weapon === 'knife') this.ammoText.setText('—');
-      else if (me.reload > 0) this.ammoText.setText('RELOADING');
-      else this.ammoText.setText(`${me.ammo} / ${me.reserve}`);
-      this.weaponText.setText(me.weapon.toUpperCase() + (me.kit ? '  +KIT' : ''));
+      if (me.slot === 4 && me.nades?.length) {
+        this.ammoText.setText('THROW');
+        this.weaponText.setText(getGrenade(me.nades[0]).name.toUpperCase());
+      } else if (me.weapon === 'knife') {
+        this.ammoText.setText('—');
+        this.weaponText.setText(me.weapon.toUpperCase());
+      } else if (me.reload > 0) {
+        this.ammoText.setText('RELOADING');
+        this.weaponText.setText(me.weapon.toUpperCase() + (me.kit ? '  +KIT' : ''));
+      } else {
+        this.ammoText.setText(`${me.ammo} / ${me.reserve}`);
+        this.weaponText.setText(me.weapon.toUpperCase() + (me.kit ? '  +KIT' : ''));
+      }
+      this.nadeText.setText(me.nades?.length ? `[4] ${me.nades.map((n) => getGrenade(n).name).join(', ')}` : '');
       this.bombHint.setText(me.bomb ? 'YOU HAVE THE C4 — hold E on a bomb site to plant' : '');
+
+      // flash blindness: full white fading proportional to remaining duration
+      const blindFrac = Math.min(1, (me.blind ?? 0) / (FLASH_MAX_BLIND * TICK_RATE));
+      this.blindOverlay.setFillStyle(0xffffff, blindFrac);
     }
 
     // timer + scores

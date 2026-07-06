@@ -12,14 +12,23 @@ import {
   DEFUSE_TIME_KIT,
   dist,
   encode,
+  fromAngle,
   FREEZE_TIME,
+  getGrenade,
   getMap,
   getWeapon,
+  GRENADE_MAX_TOTAL,
+  GRENADE_THROW_SPEED,
+  GRENADES,
+  HE_ARMOR_PENETRATION,
   isOvertimeHalfStart,
   isPistolRound,
   isSideSwap,
   matchWinner,
   MAX_HP,
+  MOLOTOV_DPS,
+  MOLOTOV_DURATION,
+  MOLOTOV_RADIUS,
   mulberry32,
   OT_MONEY,
   PFLAG,
@@ -28,24 +37,34 @@ import {
   PLANT_TIME,
   PRICE_DEFUSE_KIT,
   PRICE_KEVLAR,
+  resolveFlashBlind,
+  resolveHeDamage,
   ROUND_END_TIME,
   ROUND_TIME,
   roundPayout,
+  SMOKE_BLOOM_TIME,
+  SMOKE_DURATION,
+  SMOKE_RADIUS,
   SNAPSHOT_RATE,
   START_MONEY,
+  stepGrenade,
   stepMovement,
   TICK_DT,
   TICK_RATE,
   TILE_SIZE,
   traceShot,
+  WEAPONS,
   type CombatTarget,
   type CompiledMap,
   type GameEvent,
+  type GrenadeKind,
   type GroundItem,
   type InputMsg,
   type LossStreaks,
   type MatchPhase,
   type MatchSnap,
+  type NadeSnap,
+  type Occluder,
   type PlayerSnap,
   type RosterEntry,
   type RoundEndReason,
@@ -53,6 +72,7 @@ import {
   type TeamId,
   type Vec2,
   type WeaponDef,
+  type ZoneSnap,
 } from '@cs2d/shared';
 import { LagCompensator } from './lagcomp.js';
 
@@ -108,7 +128,8 @@ export interface PlayerConn {
   hasKit: boolean;
   primary: WeaponSlot | null;
   secondary: WeaponSlot | null;
-  activeSlot: 1 | 2 | 3;
+  nades: string[]; // owned grenade ids, throw order (front = next thrown)
+  activeSlot: 1 | 2 | 3 | 4;
   reloadEndTick: number;
   nextShotTick: number;
   bloom: number;
@@ -119,6 +140,7 @@ export interface PlayerConn {
   inputQueue: InputMsg[];
   respawnTick: number; // warmup only
   actionStartTick: number; // plant/defuse progress (0 = none)
+  blindUntilTick: number; // 0 = not blinded
   kills: number;
   deaths: number;
 }
@@ -128,6 +150,27 @@ interface BombState {
   pos: Vec2;
   carrierId: number;
   explodeTick: number;
+}
+
+interface ActiveNade {
+  id: number;
+  kind: GrenadeKind;
+  pos: Vec2;
+  vel: Vec2;
+  fuseTick: number;
+}
+
+interface SmokeZone {
+  id: number;
+  pos: Vec2;
+  startTick: number;
+  untilTick: number;
+}
+
+interface FireZone {
+  id: number;
+  pos: Vec2;
+  untilTick: number;
 }
 
 const slotOf = (p: PlayerConn): WeaponSlot | null =>
@@ -153,6 +196,11 @@ export class Room {
   private liveStartTick = 0;
   private groundItems = new Map<number, { weaponId: string; pos: Vec2; ammo: number; reserve: number }>();
   private nextItemId = 1;
+  private activeNades = new Map<number, ActiveNade>();
+  private smokes = new Map<number, SmokeZone>();
+  private fires = new Map<number, FireZone>();
+  private nextNadeId = 1;
+  private nextZoneId = 1;
 
   private nextId = 1;
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -216,6 +264,7 @@ export class Room {
       hasKit: false,
       primary: null,
       secondary: null,
+      nades: [],
       activeSlot: 2,
       reloadEndTick: 0,
       nextShotTick: 0,
@@ -226,6 +275,7 @@ export class Room {
       inputQueue: [],
       respawnTick: 0,
       actionStartTick: 0,
+      blindUntilTick: 0,
       kills: 0,
       deaths: 0,
     };
@@ -301,6 +351,18 @@ export class Room {
       return;
     }
 
+    const grenadeDef = GRENADES[item as GrenadeKind];
+    if (grenadeDef) {
+      if (grenadeDef.team && grenadeDef.team !== p.team) return;
+      if (p.nades.length >= GRENADE_MAX_TOTAL) return;
+      if (p.nades.filter((n) => n === item).length >= grenadeDef.maxCarry) return;
+      if (p.money < grenadeDef.price) return;
+      p.money -= grenadeDef.price;
+      p.nades.push(item);
+      return;
+    }
+
+    if (!(item in WEAPONS)) return; // unknown item id — ignore rather than throw
     const w = getWeapon(item.replace(/[^a-z0-9]/g, ''));
     if (w.cls === 'knife') return;
     if (w.team && w.team !== p.team) return;
@@ -471,6 +533,9 @@ export class Room {
     const otMoney = isOvertimeHalfStart(this.roundNumber);
 
     this.groundItems.clear();
+    this.activeNades.clear();
+    this.smokes.clear();
+    this.fires.clear();
     this.bomb = { mode: 'none', pos: { x: 0, y: 0 }, carrierId: 0, explodeTick: 0 };
     this.bombWasPlanted = false;
 
@@ -484,15 +549,18 @@ export class Room {
       p.reloadEndTick = 0;
       p.actionStartTick = 0;
       p.respawnTick = 0;
+      p.blindUntilTick = 0;
       p.pos = this.spawnPos(p.team, byTeam[p.team]++);
       if (freshEconomy) {
         p.money = otMoney ? OT_MONEY : START_MONEY;
         p.armor = 0;
         p.hasKit = false;
         p.primary = null;
+        p.nades = [];
         this.givePistolLoadout(p);
       } else if (!survived) {
         p.primary = null;
+        p.nades = [];
         p.hasKit = p.team === 'CT' ? p.hasKit : false;
         this.givePistolLoadout(p);
       } else {
@@ -550,6 +618,9 @@ export class Room {
     this.score = { T: 0, CT: 0 };
     this.bomb.mode = 'none';
     this.groundItems.clear();
+    this.activeNades.clear();
+    this.smokes.clear();
+    this.fires.clear();
     const byTeam: Record<TeamId, number> = { T: 0, CT: 0 };
     for (const p of this.players.values()) {
       p.alive = true;
@@ -558,6 +629,8 @@ export class Room {
       p.money = START_MONEY;
       p.armor = 0;
       p.primary = null;
+      p.nades = [];
+      p.blindUntilTick = 0;
       this.givePistolLoadout(p);
       p.pos = this.spawnPos(p.team, byTeam[p.team]++);
     }
@@ -600,10 +673,123 @@ export class Room {
     if (slot === p.activeSlot) return;
     if (slot === 1 && !p.primary) return;
     if (slot === 2 && !p.secondary) return;
-    if (slot < 1 || slot > 3) return;
-    p.activeSlot = slot as 1 | 2 | 3;
+    if (slot === 4 && p.nades.length === 0) return;
+    if (slot < 1 || slot > 4) return;
+    p.activeSlot = slot as 1 | 2 | 3 | 4;
     p.reloadEndTick = 0;
     p.nextShotTick = Math.max(p.nextShotTick, this.tick + Math.round(0.25 * TICK_RATE));
+  }
+
+  // ── grenades ──────────────────────────────────────────────────────────────
+
+  private throwGrenade(p: PlayerConn, input: InputMsg): void {
+    if (this.phase === 'freeze') return;
+    if ((p.prevButtons & BTN.ATTACK) !== 0) return; // one throw per fresh press
+    if (p.nades.length === 0) return;
+
+    const kind = p.nades.shift()! as GrenadeKind;
+    const def = getGrenade(kind);
+    const vel = fromAngle(input.a, GRENADE_THROW_SPEED);
+    const id = this.nextNadeId++;
+    this.activeNades.set(id, { id, kind, pos: { ...p.pos }, vel, fuseTick: this.tick + sec(def.fuse) });
+    this.emit({ e: 'nade_throw', kind, x: p.pos.x, y: p.pos.y });
+
+    if (p.nades.length === 0) p.activeSlot = p.primary ? 1 : 2;
+  }
+
+  private smokeRadius(s: SmokeZone): number {
+    const bloomTicks = Math.max(1, sec(SMOKE_BLOOM_TIME));
+    return SMOKE_RADIUS * Math.min(1, (this.tick - s.startTick) / bloomTicks);
+  }
+
+  private killByEnvironment(p: PlayerConn): void {
+    p.hp = 0;
+    p.alive = false;
+    p.deaths++;
+    if (p.primary) {
+      this.dropWeapon(p, p.primary);
+      p.primary = null;
+    }
+    if (p.hasBomb) this.dropBomb(p);
+    this.broadcastRoster();
+  }
+
+  private detonateNade(n: ActiveNade): void {
+    switch (n.kind) {
+      case 'he': {
+        const targets = [...this.players.values()]
+          .filter((p) => p.alive)
+          .map((p) => ({ id: p.id, pos: p.pos, alive: p.alive }));
+        for (const hit of resolveHeDamage(n.pos, targets, this.map)) {
+          const victim = this.players.get(hit.id);
+          if (!victim?.alive) continue;
+          const { hpDamage, armor } = applyArmor(hit.rawDamage, victim.armor, HE_ARMOR_PENETRATION);
+          victim.armor = armor;
+          victim.hp -= hpDamage;
+          this.emit({ e: 'hurt', d: hpDamage, from: 0 }, victim.id);
+          if (victim.hp <= 0) this.killByEnvironment(victim);
+        }
+        this.emit({ e: 'he_pop', x: n.pos.x, y: n.pos.y });
+        break;
+      }
+      case 'flash': {
+        const smokeOccluders: Occluder[] = [...this.smokes.values()].map((s) => ({ pos: s.pos, radius: this.smokeRadius(s) }));
+        const targets = [...this.players.values()]
+          .filter((p) => p.alive)
+          .map((p) => ({ id: p.id, pos: p.pos, aim: p.aim, alive: p.alive }));
+        for (const b of resolveFlashBlind(n.pos, targets, this.map, smokeOccluders)) {
+          const victim = this.players.get(b.id);
+          if (!victim) continue;
+          victim.blindUntilTick = Math.max(victim.blindUntilTick, this.tick + sec(b.duration));
+        }
+        this.emit({ e: 'flash_pop', x: n.pos.x, y: n.pos.y });
+        break;
+      }
+      case 'smoke': {
+        const id = this.nextZoneId++;
+        this.smokes.set(id, { id, pos: { ...n.pos }, startTick: this.tick, untilTick: this.tick + sec(SMOKE_DURATION) });
+        this.emit({ e: 'smoke_pop', x: n.pos.x, y: n.pos.y });
+        break;
+      }
+      case 'molotov':
+      case 'incendiary': {
+        const id = this.nextZoneId++;
+        this.fires.set(id, { id, pos: { ...n.pos }, untilTick: this.tick + sec(MOLOTOV_DURATION) });
+        this.emit({ e: 'molotov_ignite', x: n.pos.x, y: n.pos.y });
+        break;
+      }
+    }
+  }
+
+  private updateGrenades(): void {
+    for (const [id, n] of this.activeNades) {
+      if (this.tick >= n.fuseTick) {
+        this.detonateNade(n);
+        this.activeNades.delete(id);
+        continue;
+      }
+      const stepped = stepGrenade({ pos: n.pos, vel: n.vel }, this.map, TICK_DT);
+      n.pos = stepped.pos;
+      n.vel = stepped.vel;
+    }
+
+    for (const [id, f] of this.fires) {
+      if (this.tick >= f.untilTick) {
+        this.fires.delete(id);
+        continue;
+      }
+      for (const p of this.players.values()) {
+        if (!p.alive || dist(p.pos, f.pos) > MOLOTOV_RADIUS) continue;
+        const d = MOLOTOV_DPS * TICK_DT;
+        p.hp -= d;
+        this.emit({ e: 'hurt', d, from: 0 }, p.id);
+        if (p.hp <= 0) this.killByEnvironment(p);
+      }
+    }
+
+    for (const [id, s] of this.smokes) {
+      if (this.tick >= s.untilTick) this.smokes.delete(id);
+    }
   }
 
   private tryFire(p: PlayerConn, input: InputMsg): void {
@@ -727,7 +913,10 @@ export class Room {
           if (canMove) {
             p.pos = stepMovement(p.pos, buttonsToMove(input.b), activeWeapon(p).mobility, this.map, TICK_DT);
           }
-          if (input.b & BTN.ATTACK) this.tryFire(p, input);
+          if (input.b & BTN.ATTACK) {
+            if (p.activeSlot === 4) this.throwGrenade(p, input);
+            else this.tryFire(p, input);
+          }
           this.updatePlantDefuse(p, input);
         }
         p.prevButtons = input.b;
@@ -740,6 +929,7 @@ export class Room {
       if (w.spreadDecay > 0) p.bloom = Math.max(0, p.bloom - w.spreadDecay * TICK_DT);
     }
 
+    this.updateGrenades();
     this.bombPickupCheck();
     this.checkWinConditions();
 
@@ -802,12 +992,23 @@ export class Room {
     if (p.hasBomb) s.bomb = 1;
     if (p.hasKit) s.kit = 1;
     if (this.buyingAllowed(p)) s.buy = 1;
+    if (p.nades.length > 0) s.nades = p.nades;
+    if (p.blindUntilTick > this.tick) s.blind = p.blindUntilTick - this.tick;
     return s;
   }
 
   private broadcastSnapshot(): void {
     const players = this.snapPlayers();
     const items: GroundItem[] = [...this.groundItems.entries()].map(([id, it]) => [id, it.weaponId, Math.round(it.pos.x), Math.round(it.pos.y)]);
+    const nades: NadeSnap[] = [...this.activeNades.values()].map((n) => [n.id, n.kind, Math.round(n.pos.x), Math.round(n.pos.y)]);
+    const zones: ZoneSnap[] = [
+      ...[...this.smokes.values()].map(
+        (s): ZoneSnap => [s.id, 'smoke', Math.round(s.pos.x), Math.round(s.pos.y), Math.round(this.smokeRadius(s)), Math.max(0, s.untilTick - this.tick)],
+      ),
+      ...[...this.fires.values()].map(
+        (f): ZoneSnap => [f.id, 'fire', Math.round(f.pos.x), Math.round(f.pos.y), MOLOTOV_RADIUS, Math.max(0, f.untilTick - this.tick)],
+      ),
+    ];
     const events = this.events;
     this.events = [];
     for (const p of this.players.values()) {
@@ -821,6 +1022,8 @@ export class Room {
           p: players,
           m: this.matchSnap(p),
           ...(items.length ? { g: items } : {}),
+          ...(nades.length ? { n: nades } : {}),
+          ...(zones.length ? { z: zones } : {}),
           me: this.selfState(p),
           ...(ev.length ? { ev } : {}),
         }),

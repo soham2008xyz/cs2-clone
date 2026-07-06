@@ -52,20 +52,26 @@ export const PRICE_DEFUSE_KIT = 400;
 
 // ── Grenades ──────────────────────────────────────────────────────────────────
 export const GRENADE_MAX_TOTAL = 4;
+export const GRENADE_RADIUS = 6; // physical size for wall-bounce collision
+export const SMOKE_FUSE = 2.0;
 export const SMOKE_DURATION = 18;
 export const SMOKE_RADIUS = 90;
+export const SMOKE_BLOOM_TIME = 1.0; // seconds to grow from 0 to full radius
 export const FLASH_FUSE = 1.6;
 export const FLASH_MAX_BLIND = 2.8; // seconds fully blind at worst case
 export const FLASH_RANGE = 500;
 export const HE_FUSE = 1.6;
 export const HE_MAX_DAMAGE = 98;
 export const HE_RADIUS = 130;
+export const HE_ARMOR_PEN = 0.6;
+export const MOLOTOV_FUSE = 1.6;
 export const MOLOTOV_DURATION = 7;
 export const MOLOTOV_RADIUS = 70;
 export const MOLOTOV_DPS = 40;
 export const GRENADE_THROW_SPEED = 500;
 export const GRENADE_FRICTION = 0.55; // velocity kept per bounce
 export const GRENADE_DRAG = 1.4; // per-second exponential drag
+export const MAX_FLASH_CARRY = 2;
 
 // ── Misc ──────────────────────────────────────────────────────────────────────
 export const FRIENDLY_FIRE = false;
