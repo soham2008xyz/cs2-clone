@@ -71,11 +71,14 @@ export function initMenu(onStart: () => void): void {
     enterRoom(normalized, roomMap);
   };
 
+  const selectedDifficulty = (): 'easy' | 'normal' | 'hard' => el<HTMLSelectElement>('menu-difficulty').value as 'easy' | 'normal' | 'hard';
+
   el<HTMLButtonElement>('menu-quickplay').onclick = async () => {
     showError('');
     try {
-      const { code, map } = await createRoom('dust2', true);
-      enterRoom(code, map, { perTeam: 5, difficulty: 'normal' });
+      const difficulty = selectedDifficulty();
+      const { code, map } = await createRoom('dust2', true, difficulty);
+      enterRoom(code, map, { perTeam: 5, difficulty });
     } catch {
       showError('could not create a match — is the server running?');
     }
@@ -86,7 +89,7 @@ export function initMenu(onStart: () => void): void {
     try {
       const map = el<HTMLSelectElement>('menu-map').value;
       const backfillBots = el<HTMLInputElement>('menu-backfill').checked;
-      const { code, map: confirmedMap } = await createRoom(map, backfillBots);
+      const { code, map: confirmedMap } = await createRoom(map, backfillBots, selectedDifficulty());
       enterRoom(code, confirmedMap);
     } catch {
       showError('could not create a room — is the server running?');

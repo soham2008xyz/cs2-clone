@@ -33,4 +33,16 @@ export function renderMap(scene: Phaser.Scene, map: CompiledMap): void {
       .setOrigin(0.5)
       .setAlpha(0.5);
   }
+
+  for (const callout of map.def.callouts) {
+    scene.add
+      .text((callout.tx + 0.5) * TILE_SIZE, (callout.ty + 0.5) * TILE_SIZE, callout.name.toUpperCase(), {
+        fontFamily: 'monospace',
+        fontSize: '12px',
+        color: '#dddddd',
+      })
+      .setOrigin(0.5)
+      .setAlpha(0.35)
+      .setDepth(2);
+  }
 }

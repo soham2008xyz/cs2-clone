@@ -19,11 +19,15 @@ export async function listRooms(): Promise<{ maps: string[]; rooms: RoomListing[
   return res.json();
 }
 
-export async function createRoom(map: string, backfillBots: boolean): Promise<{ code: string; map: string }> {
+export async function createRoom(
+  map: string,
+  backfillBots: boolean,
+  botDifficulty?: 'easy' | 'normal' | 'hard',
+): Promise<{ code: string; map: string }> {
   const res = await fetch(`${apiBase()}/rooms`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ map, backfillBots }),
+    body: JSON.stringify({ map, backfillBots, botDifficulty }),
   });
   if (!res.ok) throw new Error(`create room failed: ${res.status}`);
   return res.json();

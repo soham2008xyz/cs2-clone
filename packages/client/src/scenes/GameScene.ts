@@ -69,6 +69,7 @@ export class GameScene extends Phaser.Scene {
   private visionGfx!: Phaser.GameObjects.Graphics;
   private darkness!: Phaser.GameObjects.Graphics;
   private tracerGfx!: Phaser.GameObjects.Graphics;
+  private shotFxMask!: Phaser.Display.Masks.GeometryMask;
   private tracers: Tracer[] = [];
   private keys!: Record<'W' | 'A' | 'S' | 'D' | 'SHIFT' | 'R' | 'E' | 'G' | 'ONE' | 'TWO' | 'THREE' | 'FOUR', Phaser.Input.Keyboard.Key>;
   private pendingSlot: number | undefined;
@@ -117,6 +118,10 @@ export class GameScene extends Phaser.Scene {
     const darkMask = this.visionGfx.createGeometryMask();
     darkMask.setInvertAlpha(true);
     this.darkness.setMask(darkMask);
+    // enemy tracers/muzzle flashes should only be visible where they cross our
+    // own vision — otherwise they'd leak approximate enemy positions through fog
+    this.shotFxMask = this.visionGfx.createGeometryMask();
+    this.tracerGfx.setMask(this.shotFxMask);
 
     this.cameras.main.setBounds(0, 0, this.map.widthPx, this.map.heightPx);
     this.cameras.main.setZoom(1.25);
@@ -269,7 +274,8 @@ export class GameScene extends Phaser.Scene {
             .setRotation(ang)
             .setDisplaySize(30, 30)
             .setBlendMode(Phaser.BlendModes.ADD)
-            .setAlpha(0.9);
+            .setAlpha(0.9)
+            .setMask(this.shotFxMask);
           this.tweens.add({ targets: m, alpha: 0, duration: 60, onComplete: () => m.destroy() });
         }
         break;

@@ -5,12 +5,14 @@ import { parse as parseUrl } from 'node:url';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { decode, listMaps, type ClientMsg } from '@cs2d/shared';
+import type { BotDifficulty } from './bots/bot.js';
 import { RoomManager } from './roomManager.js';
 
 const PORT = Number(process.env.PORT ?? 8090);
 // CS2D_FAST=1 shrinks round timings for integration tests
 const FAST_TIMINGS = process.env.CS2D_FAST === '1' ? { freeze: 1, round: 20, bomb: 4, plant: 0.5, defuse: 1, defuseKit: 0.5, roundEnd: 1 } : {};
 const REAP_INTERVAL_MS = 30000;
+const BOT_DIFFICULTIES: BotDifficulty[] = ['easy', 'normal', 'hard'];
 
 const manager = new RoomManager();
 setInterval(() => manager.reap(), REAP_INTERVAL_MS);
@@ -77,9 +79,10 @@ const http = createServer(async (req, res) => {
 
   if (url.pathname === '/rooms' && req.method === 'POST') {
     try {
-      const body = (await readJsonBody(req)) as { map?: string; backfillBots?: boolean };
+      const body = (await readJsonBody(req)) as { map?: string; backfillBots?: boolean; botDifficulty?: string };
       const map = listMaps().includes(body.map ?? '') ? (body.map as string) : 'dust2';
-      const meta = manager.create(map, Boolean(body.backfillBots), FAST_TIMINGS);
+      const botDifficulty = BOT_DIFFICULTIES.includes(body.botDifficulty as BotDifficulty) ? (body.botDifficulty as BotDifficulty) : 'normal';
+      const meta = manager.create(map, Boolean(body.backfillBots), FAST_TIMINGS, botDifficulty);
       res.writeHead(200, { 'content-type': 'application/json', ...cors });
       res.end(JSON.stringify({ code: meta.code, map: meta.map }));
     } catch {
@@ -142,7 +145,7 @@ wss.on('connection', (ws: WebSocket, req) => {
       const departedTeam = room.removePlayer(playerId);
       console.log(`[room ${meta.code}] #${playerId} left, ${room.players.size} online`);
       if (meta.backfillBots && departedTeam && room.phase !== 'waiting') {
-        room.addBot(departedTeam);
+        room.addBot(departedTeam, meta.botDifficulty);
       }
     }
   });

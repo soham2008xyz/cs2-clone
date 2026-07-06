@@ -1,9 +1,11 @@
+import type { BotDifficulty } from './bots/bot.js';
 import { Room, type RoomTimings } from './room.js';
 
 export interface RoomMeta {
   code: string;
   map: string;
   backfillBots: boolean;
+  botDifficulty: BotDifficulty;
 }
 
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // excludes ambiguous chars (0/O, 1/I)
@@ -28,12 +30,12 @@ const REAP_GRACE_MS = 60000;
 export class RoomManager {
   private rooms = new Map<string, { room: Room; meta: RoomMeta; createdAt: number }>();
 
-  create(map: string, backfillBots: boolean, timings: Partial<RoomTimings> = {}): RoomMeta {
+  create(map: string, backfillBots: boolean, timings: Partial<RoomTimings> = {}, botDifficulty: BotDifficulty = 'normal'): RoomMeta {
     let code = genCode();
     while (this.rooms.has(code)) code = genCode();
     const room = new Room(map, timings);
     room.start();
-    const meta: RoomMeta = { code, map, backfillBots };
+    const meta: RoomMeta = { code, map, backfillBots, botDifficulty };
     this.rooms.set(code, { room, meta, createdAt: Date.now() });
     return meta;
   }
