@@ -1,0 +1,52 @@
+name: Task
+description: Track a chore, refactor, or maintenance task
+title: "[Task]: "
+labels: ["documentation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for work items that aren't bugs or features — refactors, chores, upgrades, etc.
+
+  - type: textarea
+    id: objective
+    attributes:
+      label: Objective
+      description: What needs to be accomplished.
+    validations:
+      required: true
+
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: Detailed description of the work involved.
+    validations:
+      required: true
+
+  - type: textarea
+    id: checklist
+    attributes:
+      label: Checklist
+      description: Subtasks to complete.
+      placeholder: |
+        - [ ] Subtask 1
+        - [ ] Subtask 2
+    validations:
+      required: false
+
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: Any blockers or related work.
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Notes
+      description: Additional context or considerations.
+    validations:
+      required: false
