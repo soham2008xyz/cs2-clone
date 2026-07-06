@@ -10,17 +10,29 @@ import {
   type InputMsg,
   type Vec2,
 } from '@cs2d/shared';
-import type { PlayerConn, Room } from '../room.js';
+import { activeWeapon, type PlayerConn, type Room } from '../room.js';
 import { decideBotBuys } from './buy.js';
 import { findPath, smoothPath, type BlockedFn } from './pathfinding.js';
 
 export type BotDifficulty = 'easy' | 'normal' | 'hard';
 
-const DIFFICULTY_PARAMS: Record<BotDifficulty, { reactionTicks: number; aimJitter: number }> = {
-  easy: { reactionTicks: 30, aimJitter: 0.18 },
-  normal: { reactionTicks: 14, aimJitter: 0.08 },
-  hard: { reactionTicks: 5, aimJitter: 0.02 },
+interface DifficultyParams {
+  reactionTicks: number;
+  aimJitter: number;
+  /** spray control: ticks of full-auto fire before easing off the trigger */
+  burstTicks: number;
+  /** ticks of trigger release between bursts (lets recoil bloom decay) */
+  pauseTicks: number;
+}
+
+const DIFFICULTY_PARAMS: Record<BotDifficulty, DifficultyParams> = {
+  easy: { reactionTicks: 30, aimJitter: 0.18, burstTicks: 9999, pauseTicks: 0 }, // holds the trigger, sprays wild
+  normal: { reactionTicks: 14, aimJitter: 0.08, burstTicks: 14, pauseTicks: 10 },
+  hard: { reactionTicks: 5, aimJitter: 0.02, burstTicks: 8, pauseTicks: 6 },
 };
+
+/** Semi-autos need a fresh trigger press per shot: 2 ticks down, 2 up. */
+const TAP_CYCLE = 4;
 
 const WAYPOINT_RADIUS = 24;
 const REPATH_COOLDOWN = TICK_RATE; // don't repath more than once/sec for the same goal
@@ -125,7 +137,8 @@ export class BotController {
         room.botIntel = { site: nearestSite(room.map, enemy.pos), tick }; // share the sighting
       }
       aim = Math.atan2(enemy.pos.y - p.pos.y, enemy.pos.x - p.pos.x) + (Math.random() * 2 - 1) * this.params().aimJitter;
-      if (tick - this.targetSeenTick >= this.params().reactionTicks) buttons |= BTN.ATTACK;
+      const engagingTicks = tick - this.targetSeenTick - this.params().reactionTicks;
+      if (engagingTicks >= 0 && this.wantsToFire(activeWeapon(p).auto, engagingTicks)) buttons |= BTN.ATTACK;
       if (p.activeSlot === 4) switchSlot = p.primary ? 1 : 2; // don't fistfight holding a grenade
     } else {
       this.targetId = null;
@@ -158,12 +171,24 @@ export class BotController {
   }
 
   /**
+   * Spray control: automatics burst-fire (params-tuned on/off cycle so bloom
+   * can decay between bursts); semi-autos need a fresh trigger press per shot
+   * since a held ATTACK only fires once (tryFire's fresh-press check).
+   */
+  private wantsToFire(auto: boolean, engagingTicks: number): boolean {
+    if (!auto) return engagingTicks % TAP_CYCLE < TAP_CYCLE / 2;
+    const { burstTicks, pauseTicks } = this.params();
+    return engagingTicks % (burstTicks + pauseTicks) < burstTicks;
+  }
+
+  /**
    * Throw the next carried smoke/flash at a matching map anchor for the site
    * we're executing toward. Returns the throw aim angle, or null to pass.
    */
   private utilityThrow(room: Room, p: PlayerConn, tick: number): number | null {
     if (room.phase !== 'live' || this.throwsThisRound >= MAX_THROWS_PER_ROUND) return null;
     if (tick - this.lastThrowTick < THROW_COOLDOWN_TICKS) return null;
+    if ((p.prevButtons & BTN.ATTACK) !== 0) return null; // room requires a fresh press too
     const kind = p.nades[0]; // room always throws the front grenade
     if (kind !== 'smoke' && kind !== 'flash') return null;
     for (const spot of room.map.utilitySpots) {
