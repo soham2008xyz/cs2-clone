@@ -57,6 +57,7 @@ export class HudScene extends Phaser.Scene {
   private pingText!: Phaser.GameObjects.Text;
   private teamHintText!: Phaser.GameObjects.Text;
   private matchEndPanel!: Phaser.GameObjects.Container;
+  private chatOpen = false;
 
   constructor() {
     super('Hud');
@@ -91,9 +92,12 @@ export class HudScene extends Phaser.Scene {
     this.scorePanel = this.add.container(0, 0).setVisible(false);
     this.matchEndPanel = this.add.container(0, 0).setVisible(false).setDepth(150);
 
-    this.input.keyboard!.on('keydown-B', () => this.toggleBuy());
+    this.input.keyboard!.on('keydown-B', () => {
+      if (!this.chatOpen) this.toggleBuy();
+    });
     this.input.keyboard!.on('keydown-TAB', (e: KeyboardEvent) => {
-      e.preventDefault();
+      e.preventDefault(); // always: keep browser focus in place, even while typing
+      if (this.chatOpen) return;
       this.updateScoreboard();
       this.scorePanel.setVisible(true);
     });
@@ -108,6 +112,7 @@ export class HudScene extends Phaser.Scene {
     this.game.events.on('hud:spectate', this.onSpectate, this);
     this.game.events.on('hud:ping', this.onPing, this);
     this.game.events.on('hud:matchend', this.onMatchEnd, this);
+    this.game.events.on('chat:toggle', this.onChatToggle, this);
     this.events.once('shutdown', () => {
       this.game.events.off('hud:self', this.onSelf, this);
       this.game.events.off('hud:kill', this.onKill, this);
@@ -118,6 +123,7 @@ export class HudScene extends Phaser.Scene {
       this.game.events.off('hud:spectate', this.onSpectate, this);
       this.game.events.off('hud:ping', this.onPing, this);
       this.game.events.off('hud:matchend', this.onMatchEnd, this);
+      this.game.events.off('chat:toggle', this.onChatToggle, this);
     });
 
     this.scale.on('resize', () => this.layout());
@@ -220,6 +226,10 @@ export class HudScene extends Phaser.Scene {
   }
 
   // ── event handlers ────────────────────────────────────────────────────────
+
+  private onChatToggle(open: boolean): void {
+    this.chatOpen = open;
+  }
 
   private onRoster(entries: RosterEntry[]): void {
     this.roster = entries;

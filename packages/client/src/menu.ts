@@ -16,7 +16,7 @@ function showError(msg: string): void {
   el('menu-error').textContent = msg;
 }
 
-function renderRooms(rooms: RoomListing[], onJoin: (code: string) => void): void {
+function renderRooms(rooms: RoomListing[], onJoin: (code: string, map: string) => void): void {
   const container = el('menu-rooms');
   container.replaceChildren();
   if (rooms.length === 0) {
@@ -33,7 +33,7 @@ function renderRooms(rooms: RoomListing[], onJoin: (code: string) => void): void
     label.textContent = `${r.code}  ·  ${r.map}  ·  ${r.players}/10  ·  ${r.phase}`;
     const btn = document.createElement('button');
     btn.textContent = 'Join';
-    btn.onclick = () => onJoin(r.code);
+    btn.onclick = () => onJoin(r.code, r.map);
     row.appendChild(label);
     row.appendChild(btn);
     container.appendChild(row);
@@ -43,10 +43,14 @@ function renderRooms(rooms: RoomListing[], onJoin: (code: string) => void): void
 /** Wires the DOM menu overlay; calls onStart() once a room is chosen and session is populated. */
 export function initMenu(onStart: () => void): void {
   let refreshTimer: ReturnType<typeof setInterval> | null = null;
+  let knownRooms: RoomListing[] = []; // last listing, for map lookup on join-by-code
 
   const refreshRooms = () => {
     listRooms()
-      .then(({ rooms }) => renderRooms(rooms, join))
+      .then(({ rooms }) => {
+        knownRooms = rooms;
+        renderRooms(rooms, join);
+      })
       .catch(() => showError('cannot reach server — start it with: npm run dev:server'));
   };
 
@@ -59,9 +63,12 @@ export function initMenu(onStart: () => void): void {
     onStart();
   };
 
-  const join = (code: string) => {
+  const join = (code: string, map?: string) => {
     showError('');
-    enterRoom(code.toUpperCase(), 'dust2');
+    const normalized = code.toUpperCase();
+    // the server's welcome message corrects any wrong guess (session:restart)
+    const roomMap = map ?? knownRooms.find((r) => r.code === normalized)?.map ?? 'dust2';
+    enterRoom(normalized, roomMap);
   };
 
   el<HTMLButtonElement>('menu-quickplay').onclick = async () => {

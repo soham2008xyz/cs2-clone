@@ -41,7 +41,13 @@ export class Connection {
   }
 
   disconnect(): void {
-    this.ws?.close();
+    // deliberate close: detach handlers so onClose doesn't report it as a drop
+    if (this.ws) {
+      this.ws.onmessage = null;
+      this.ws.onclose = null;
+      this.ws.onerror = null;
+      this.ws.close();
+    }
   }
 }
 

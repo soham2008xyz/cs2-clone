@@ -27,6 +27,7 @@ function startGame(): void {
   });
 
   game.events.once('session:end', returnToMenu);
+  game.events.once('session:restart', restartGame);
 }
 
 function returnToMenu(): void {
@@ -34,6 +35,13 @@ function returnToMenu(): void {
   game = null;
   document.getElementById('game')!.style.display = 'none';
   document.getElementById('menu')!.style.display = 'flex';
+}
+
+/** Tear down and relaunch with the (corrected) session — e.g. map mismatch on join. */
+function restartGame(): void {
+  game?.destroy(true);
+  game = null;
+  startGame();
 }
 
 initMenu(startGame);

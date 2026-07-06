@@ -123,17 +123,21 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.centerOn(this.map.widthPx / 2, this.map.heightPx / 2);
 
     this.keys = this.input.keyboard!.addKeys('W,A,S,D,SHIFT,R,E,G,ONE,TWO,THREE,FOUR') as GameScene['keys'];
-    this.input.keyboard!.on('keydown-ONE', () => (this.pendingSlot = 1));
-    this.input.keyboard!.on('keydown-TWO', () => (this.pendingSlot = 2));
-    this.input.keyboard!.on('keydown-THREE', () => (this.pendingSlot = 3));
-    this.input.keyboard!.on('keydown-FOUR', () => (this.pendingSlot = 4));
-    this.input.keyboard!.on('keydown-SPACE', () => this.spectateIndex++);
-    this.input.keyboard!.on('keydown-M', () => {
-      if (!this.chatOpen) toggleMute();
-    });
+    // discrete hotkeys must not fire while the chat input has focus
+    const hotkey = (key: string, fn: () => void): void => {
+      this.input.keyboard!.on(`keydown-${key}`, () => {
+        if (!this.chatOpen) fn();
+      });
+    };
+    hotkey('ONE', () => (this.pendingSlot = 1));
+    hotkey('TWO', () => (this.pendingSlot = 2));
+    hotkey('THREE', () => (this.pendingSlot = 3));
+    hotkey('FOUR', () => (this.pendingSlot = 4));
+    hotkey('SPACE', () => this.spectateIndex++);
+    hotkey('M', () => toggleMute());
     this.input.once('pointerdown', () => unlockAudio()); // browsers gate audio behind a gesture
-    this.input.keyboard!.on('keydown-OPEN_BRACKET', () => this.conn.send({ t: 'team', team: 'T' }));
-    this.input.keyboard!.on('keydown-CLOSED_BRACKET', () => this.conn.send({ t: 'team', team: 'CT' }));
+    hotkey('OPEN_BRACKET', () => this.conn.send({ t: 'team', team: 'T' }));
+    hotkey('CLOSED_BRACKET', () => this.conn.send({ t: 'team', team: 'CT' }));
     this.game.events.on('buy', this.onBuy, this);
     this.game.events.on('chat:send', this.onChatSend, this);
     this.game.events.on('chat:toggle', this.onChatToggle, this);
@@ -166,6 +170,14 @@ export class GameScene extends Phaser.Scene {
     this.scene.launch('Hud');
 
     this.conn.onWelcome = (msg) => {
+      if (msg.map !== session.map) {
+        // joined a room running a different map than the menu assumed:
+        // fix the session and rebuild the whole game against the right map
+        session.map = msg.map;
+        this.conn.disconnect();
+        this.game.events.emit('session:restart');
+        return;
+      }
       this.myId = msg.id;
       this.statusText.setVisible(false);
     };
