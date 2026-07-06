@@ -39,7 +39,22 @@ export interface FillBotsMsg {
   difficulty?: 'easy' | 'normal' | 'hard';
 }
 
-export type ClientMsg = JoinMsg | InputMsg | BuyMsg | FillBotsMsg;
+export interface TeamSwitchMsg {
+  t: 'team';
+  team: TeamId;
+}
+
+export interface ChatMsg {
+  t: 'chat';
+  text: string;
+}
+
+export interface PingMsg {
+  t: 'ping';
+  t0: number;
+}
+
+export type ClientMsg = JoinMsg | InputMsg | BuyMsg | FillBotsMsg | TeamSwitchMsg | ChatMsg | PingMsg;
 
 // ── Server → client ──────────────────────────────────────────────────────────
 
@@ -129,6 +144,7 @@ export interface RosterEntry {
   team: TeamId;
   k: number; // kills
   d: number; // deaths
+  bot?: 1;
 }
 
 export interface WelcomeMsg {
@@ -143,7 +159,19 @@ export interface RosterMsg {
   players: RosterEntry[];
 }
 
-export type ServerMsg = WelcomeMsg | RosterMsg | SnapshotMsg;
+export interface ChatBroadcastMsg {
+  t: 'chat';
+  from: string;
+  team: TeamId | null; // null = server/system message
+  text: string;
+}
+
+export interface PongMsg {
+  t: 'pong';
+  t0: number;
+}
+
+export type ServerMsg = WelcomeMsg | RosterMsg | SnapshotMsg | ChatBroadcastMsg | PongMsg;
 
 export const encode = (msg: ClientMsg | ServerMsg): string => JSON.stringify(msg);
 export const decode = <T>(raw: string): T => JSON.parse(raw) as T;

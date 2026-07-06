@@ -296,12 +296,33 @@ export class Room {
     return player;
   }
 
-  removePlayer(id: number): void {
+  /** Returns the departing player's team (for bot-backfill decisions), or null if unknown. */
+  removePlayer(id: number): TeamId | null {
     const p = this.players.get(id);
     if (p?.hasBomb) this.dropBomb(p);
     this.players.delete(id);
     this.bots.delete(id);
     this.broadcastRoster();
+    return p?.team ?? null;
+  }
+
+  /** Pre-match team switch only — avoids mid-round economy/loadout weirdness. */
+  setTeam(id: number, team: TeamId): void {
+    const p = this.players.get(id);
+    if (!p || p.team === team || this.phase !== 'waiting') return;
+    p.team = team;
+    const teamCount = this.teamPlayers(team).length - 1;
+    p.pos = this.spawnPos(team, Math.max(0, teamCount));
+    this.givePistolLoadout(p);
+    this.broadcastRoster();
+  }
+
+  broadcastChat(from: string, team: TeamId | null, text: string): void {
+    const trimmed = text.slice(0, 240).trim();
+    if (!trimmed) return;
+    for (const p of this.players.values()) {
+      p.ws?.send(encode({ t: 'chat', from, team, text: trimmed }));
+    }
   }
 
   /** Public read surface for bot AI (kept separate from the private simulation fields above). */
@@ -1066,6 +1087,7 @@ export class Room {
       team: p.team,
       k: p.kills,
       d: p.deaths,
+      ...(p.ws === null ? { bot: 1 as const } : {}),
     }));
     for (const p of this.players.values()) {
       p.ws?.send(encode({ t: 'roster', players: roster }));

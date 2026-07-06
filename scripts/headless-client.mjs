@@ -1,13 +1,31 @@
-// Headless test client: joins the server and walks in a circle. Useful for
-// verifying netcode/interpolation with a real second player.
-//   node scripts/headless-client.mjs [name] [durationSec]
+// Headless test client: joins a room (creating one if no code given) and
+// walks in a circle. Useful for verifying netcode/interpolation with a real
+// second player, or for populating a room the browser client can also join.
+//   node scripts/headless-client.mjs [name] [durationSec] [roomCode]
 import WebSocket from 'ws';
 
 const name = process.argv[2] ?? 'HeadlessBob';
 const durationSec = Number(process.argv[3] ?? 60);
+const explicitRoom = process.argv[4];
 const BTN = { UP: 1, DOWN: 2, LEFT: 4, RIGHT: 8 };
 
-const ws = new WebSocket('ws://localhost:8090');
+async function resolveRoomCode() {
+  if (explicitRoom) return explicitRoom;
+  // reuse the first open room if one exists, else create a fresh dust2 room
+  const list = await fetch('http://localhost:8090/rooms').then((r) => r.json());
+  if (list.rooms.length > 0) return list.rooms[0].code;
+  const created = await fetch('http://localhost:8090/rooms', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ map: 'dust2', backfillBots: false }),
+  }).then((r) => r.json());
+  return created.code;
+}
+
+const roomCode = await resolveRoomCode();
+console.log(`[${name}] using room ${roomCode}`);
+
+const ws = new WebSocket(`ws://localhost:8090?room=${roomCode}`);
 let seq = 0;
 let tick = 0;
 

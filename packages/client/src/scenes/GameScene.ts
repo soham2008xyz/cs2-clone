@@ -19,10 +19,12 @@ import {
   type ZoneSnap,
 } from '@cs2d/shared';
 import { playerTexture } from './BootScene.js';
+import { appendChatLine, initChat } from '../chat.js';
 import { Connection, serverUrl } from '../net/connection.js';
 import { Predictor } from '../net/prediction.js';
 import { SnapshotBuffer } from '../net/interpolation.js';
 import { renderMap } from '../render/mapRender.js';
+import { session } from '../session.js';
 
 interface Entity {
   sprite: Phaser.GameObjects.Sprite;
@@ -72,6 +74,8 @@ export class GameScene extends Phaser.Scene {
   private zoneGfx!: Phaser.GameObjects.Graphics;
   private spectateIndex = 0;
   private spectateTarget = -1;
+  private chatOpen = false;
+  private pingTimer?: Phaser.Time.TimerEvent;
 
   constructor() {
     super('Game');
@@ -79,7 +83,7 @@ export class GameScene extends Phaser.Scene {
 
   create(): void {
     (window as unknown as { __scene: GameScene }).__scene = this; // debug/testing handle
-    this.map = getMap('dust2');
+    this.map = getMap(session.map);
     this.predictor = new Predictor(this.map);
     renderMap(this, this.map);
 
@@ -109,8 +113,22 @@ export class GameScene extends Phaser.Scene {
     this.input.keyboard!.on('keydown-THREE', () => (this.pendingSlot = 3));
     this.input.keyboard!.on('keydown-FOUR', () => (this.pendingSlot = 4));
     this.input.keyboard!.on('keydown-SPACE', () => this.spectateIndex++);
+    this.input.keyboard!.on('keydown-OPEN_BRACKET', () => this.conn.send({ t: 'team', team: 'T' }));
+    this.input.keyboard!.on('keydown-CLOSED_BRACKET', () => this.conn.send({ t: 'team', team: 'CT' }));
     this.game.events.on('buy', this.onBuy, this);
-    this.events.once('shutdown', () => this.game.events.off('buy', this.onBuy, this));
+    this.game.events.on('chat:send', this.onChatSend, this);
+    this.game.events.on('chat:toggle', this.onChatToggle, this);
+    this.events.once('shutdown', () => {
+      this.game.events.off('buy', this.onBuy, this);
+      this.game.events.off('chat:send', this.onChatSend, this);
+      this.game.events.off('chat:toggle', this.onChatToggle, this);
+      this.pingTimer?.destroy();
+    });
+
+    initChat(
+      (text) => this.game.events.emit('chat:send', text),
+      (open) => this.game.events.emit('chat:toggle', open),
+    );
 
     this.bombSprite = this.add.sprite(-100, -100, 'bomb').setDepth(8).setVisible(false);
     this.zoneGfx = this.add.graphics().setDepth(6);
@@ -165,26 +183,38 @@ export class GameScene extends Phaser.Scene {
       for (const ev of msg.ev ?? []) this.handleEvent(ev);
     };
     this.conn.onClose = () => {
-      this.statusText.setText('disconnected — is the server running?  (npm run dev:server)').setVisible(true);
+      this.statusText.setText('disconnected from server').setVisible(true);
+    };
+    this.conn.onChat = (msg) => {
+      const color = msg.team === 'T' ? '#ffd280' : msg.team === 'CT' ? '#9cc4ff' : '#aaaaaa';
+      appendChatLine(msg.from, msg.text, color);
+    };
+    this.conn.onPong = (msg) => {
+      this.game.events.emit('hud:ping', Math.round(performance.now() - msg.t0));
     };
 
-    const params = new URLSearchParams(location.search);
-    const name = params.get('name') ?? `Player${Math.floor(Math.random() * 1000)}`;
     this.conn
-      .connect(serverUrl())
+      .connect(serverUrl(session.roomCode))
       .then(() => {
-        this.conn.send({ t: 'join', name });
-        // "Play vs Bots" entry point (?bots=1 or ?bots=easy|normal|hard) —
-        // full lobby UI with a proper button comes in the multiplayer-polish phase
-        const bots = params.get('bots');
-        if (bots) {
-          const difficulty = (['easy', 'normal', 'hard'] as const).includes(bots as never) ? (bots as 'easy' | 'normal' | 'hard') : 'normal';
-          this.conn.send({ t: 'bots', perTeam: 5, difficulty });
-        }
+        this.conn.send({ t: 'join', name: session.name, team: session.team });
+        if (session.botsRequested) this.conn.send({ t: 'bots', ...session.botsRequested });
+        this.pingTimer = this.time.addEvent({
+          delay: 2000,
+          loop: true,
+          callback: () => this.conn.send({ t: 'ping', t0: performance.now() }),
+        });
       })
       .catch(() => {
         this.statusText.setText('cannot reach server — start it with: npm run dev:server').setVisible(true);
       });
+  }
+
+  private onChatSend(text: string): void {
+    this.conn.send({ t: 'chat', text });
+  }
+
+  private onChatToggle(open: boolean): void {
+    this.chatOpen = open;
   }
 
   private nameOf(id: number): string {
@@ -240,7 +270,12 @@ export class GameScene extends Phaser.Scene {
         break;
       case 'match_end': {
         const label = ev.winner === 'T' ? 'TERRORISTS WIN THE MATCH' : 'COUNTER-TERRORISTS WIN THE MATCH';
-        this.game.events.emit('hud:banner', { text: label, color: '#ffe680', ttl: 12000 });
+        this.game.events.emit('hud:banner', { text: label, color: '#ffe680', ttl: 8000 });
+        this.game.events.emit('hud:matchend', { winner: ev.winner, roster: [...this.roster.values()] });
+        this.time.delayedCall(8000, () => {
+          this.conn.disconnect();
+          this.game.events.emit('session:end');
+        });
         break;
       }
       case 'he_pop': {
@@ -308,14 +343,16 @@ export class GameScene extends Phaser.Scene {
       const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
       const aim = Math.atan2(world.y - this.predictor.pos.y, world.x - this.predictor.pos.x);
       let buttons = 0;
-      if (this.keys.W.isDown) buttons |= BTN.UP;
-      if (this.keys.S.isDown) buttons |= BTN.DOWN;
-      if (this.keys.A.isDown) buttons |= BTN.LEFT;
-      if (this.keys.D.isDown) buttons |= BTN.RIGHT;
-      if (this.keys.SHIFT.isDown) buttons |= BTN.WALK;
-      if (this.keys.R.isDown) buttons |= BTN.RELOAD;
-      if (this.keys.E.isDown) buttons |= BTN.USE;
-      if (this.input.activePointer.isDown) buttons |= BTN.ATTACK;
+      if (!this.chatOpen) {
+        if (this.keys.W.isDown) buttons |= BTN.UP;
+        if (this.keys.S.isDown) buttons |= BTN.DOWN;
+        if (this.keys.A.isDown) buttons |= BTN.LEFT;
+        if (this.keys.D.isDown) buttons |= BTN.RIGHT;
+        if (this.keys.SHIFT.isDown) buttons |= BTN.WALK;
+        if (this.keys.R.isDown) buttons |= BTN.RELOAD;
+        if (this.keys.E.isDown) buttons |= BTN.USE;
+        if (this.input.activePointer.isDown) buttons |= BTN.ATTACK;
+      }
       const mobility = this.me ? getWeapon(this.me.weapon).mobility : 1;
       const canMove = this.alive && this.match?.ph !== 'freeze';
       const input = this.predictor.buildInput(buttons, aim, this.lastServerTick, this.pendingSlot);

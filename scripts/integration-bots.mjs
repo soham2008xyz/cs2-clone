@@ -34,15 +34,23 @@ async function waitFor(desc, cond, timeoutMs = 20000) {
 
 async function main() {
   server = spawn('npx', ['tsx', 'packages/server/src/index.ts'], {
-    env: { ...process.env, PORT: String(PORT), CS2D_MAP: 'dust2', CS2D_FAST: '1' },
+    env: { ...process.env, PORT: String(PORT), CS2D_FAST: '1' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   server.stderr.on('data', (d) => process.stdout.write(`[srv-err] ${d}`));
   await waitFor('server up', () => fetch(`http://localhost:${PORT}`).then(() => true).catch(() => false), 15000);
   await sleep(200);
 
+  const createRes = await fetch(`http://localhost:${PORT}/rooms`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ map: 'dust2', backfillBots: false }),
+  });
+  const { code: roomCode } = await createRes.json();
+  ok(`created room ${roomCode} (dust2)`);
+
   let state = { roster: [], match: null, rounds: [] };
-  ws = new WebSocket(`ws://localhost:${PORT}`);
+  ws = new WebSocket(`ws://localhost:${PORT}?room=${roomCode}`);
   await new Promise((resolve, reject) => {
     ws.on('open', () => {
       ws.send(JSON.stringify({ t: 'join', name: 'Observer', team: 'T' }));

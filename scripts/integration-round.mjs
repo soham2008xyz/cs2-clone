@@ -36,9 +36,9 @@ class TestClient {
     clients.push(this);
   }
 
-  connect() {
+  connect(roomCode) {
     return new Promise((resolve, reject) => {
-      this.ws = new WebSocket(`ws://localhost:${PORT}`);
+      this.ws = new WebSocket(`ws://localhost:${PORT}?room=${roomCode}`);
       this.ws.on('open', () => {
         this.ws.send(JSON.stringify({ t: 'join', name: this.name, team: this.team }));
         this.timer = setInterval(() => {
@@ -127,7 +127,7 @@ const clearEvents = () => clients.forEach((c) => (c.events.length = 0));
 
 async function main() {
   server = spawn('npx', ['tsx', 'packages/server/src/index.ts'], {
-    env: { ...process.env, PORT: String(PORT), CS2D_MAP: 'testarena', CS2D_FAST: '1' },
+    env: { ...process.env, PORT: String(PORT), CS2D_FAST: '1' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   server.stdout.on('data', (d) => process.env.VERBOSE && process.stdout.write(`[srv] ${d}`));
@@ -135,10 +135,18 @@ async function main() {
   await waitFor('server up', () => fetch(`http://localhost:${PORT}`).then(() => true).catch(() => false), 15000);
   await sleep(200);
 
+  const createRes = await fetch(`http://localhost:${PORT}/rooms`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ map: 'testarena', backfillBots: false }),
+  });
+  const { code: roomCode } = await createRes.json();
+  ok(`created room ${roomCode} (testarena)`);
+
   const A = new TestClient('Alpha', 'T');
   const B = new TestClient('Bravo', 'CT');
-  await A.connect();
-  await B.connect();
+  await A.connect(roomCode);
+  await B.connect(roomCode);
   ok('both clients connected');
 
   await waitFor('match freeze', () => A.match?.ph === 'freeze');

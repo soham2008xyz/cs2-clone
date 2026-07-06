@@ -11,18 +11,225 @@
         padding: 0;
         background: #111;
         overflow: hidden;
+        font-family: monospace;
       }
       #game {
         width: 100vw;
         height: 100vh;
+        display: none;
       }
       #game canvas {
         cursor: none;
       }
+
+      #menu {
+        width: 100vw;
+        height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: radial-gradient(circle at 50% 20%, #3a3324, #14120c);
+        color: #eee;
+      }
+      #menu-panel {
+        width: 420px;
+        max-width: 92vw;
+        background: #1c1a14;
+        border: 1px solid #4a4330;
+        border-radius: 6px;
+        padding: 20px 24px;
+      }
+      #menu h1 {
+        font-size: 20px;
+        letter-spacing: 2px;
+        color: #d9a33c;
+        margin: 0 0 16px;
+        text-align: center;
+      }
+      #menu label {
+        display: block;
+        font-size: 11px;
+        color: #999;
+        margin: 12px 0 4px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+      }
+      #menu input[type='text'],
+      #menu select {
+        width: 100%;
+        box-sizing: border-box;
+        background: #0e0d09;
+        border: 1px solid #4a4330;
+        color: #eee;
+        padding: 7px 8px;
+        font-family: monospace;
+        font-size: 14px;
+        border-radius: 3px;
+      }
+      #menu button {
+        width: 100%;
+        margin-top: 8px;
+        background: #d9a33c;
+        border: none;
+        color: #14120c;
+        font-weight: bold;
+        padding: 9px;
+        font-family: monospace;
+        font-size: 13px;
+        border-radius: 3px;
+        cursor: pointer;
+        letter-spacing: 0.5px;
+      }
+      #menu button:hover {
+        background: #eab94f;
+      }
+      #menu button.secondary {
+        background: #33302380;
+        color: #ddd;
+        border: 1px solid #4a4330;
+      }
+      #menu button.secondary:hover {
+        background: #4a4330;
+      }
+      #menu .row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      #menu .row input {
+        flex: 1;
+      }
+      #menu .row button {
+        width: auto;
+        white-space: nowrap;
+      }
+      #menu .checkbox-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 10px;
+        font-size: 12px;
+        color: #bbb;
+      }
+      #menu .checkbox-row input {
+        width: auto;
+      }
+      #menu hr {
+        border: none;
+        border-top: 1px solid #3a3424;
+        margin: 16px 0;
+      }
+      #menu-error {
+        color: #ff8877;
+        font-size: 12px;
+        min-height: 16px;
+        margin-top: 8px;
+      }
+      #menu-rooms {
+        max-height: 130px;
+        overflow-y: auto;
+        margin-top: 6px;
+        border: 1px solid #332f22;
+        border-radius: 3px;
+      }
+      .room-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 6px 8px;
+        font-size: 12px;
+        border-bottom: 1px solid #262316;
+      }
+      .room-row button {
+        width: auto;
+        margin: 0;
+        padding: 3px 10px;
+        font-size: 11px;
+      }
+      #menu-rooms-empty {
+        padding: 8px;
+        font-size: 12px;
+        color: #777;
+        text-align: center;
+      }
+
+      #chat-log {
+        position: fixed;
+        left: 16px;
+        bottom: 100px;
+        width: 340px;
+        max-height: 140px;
+        overflow: hidden;
+        pointer-events: none;
+        font-size: 12px;
+        z-index: 50;
+      }
+      #chat-log div {
+        background: #00000066;
+        padding: 2px 6px;
+        margin-bottom: 2px;
+        border-radius: 2px;
+        color: #eee;
+        text-shadow: 1px 1px 1px #000;
+        width: fit-content;
+        max-width: 100%;
+        word-break: break-word;
+      }
+      #chat-input {
+        position: fixed;
+        left: 16px;
+        bottom: 100px;
+        width: 340px;
+        display: none;
+        z-index: 51;
+        background: #000000cc;
+        border: 1px solid #d9a33c;
+        color: #fff;
+        font-family: monospace;
+        font-size: 13px;
+        padding: 5px 7px;
+        box-sizing: border-box;
+      }
     </style>
   </head>
   <body>
+    <div id="menu">
+      <div id="menu-panel">
+        <h1>CS2D</h1>
+        <label for="menu-name">Player name</label>
+        <input type="text" id="menu-name" maxlength="24" placeholder="Player" />
+
+        <button id="menu-quickplay">Quick Match vs Bots</button>
+
+        <hr />
+
+        <label for="menu-map">Create room — map</label>
+        <select id="menu-map"><option value="dust2">Dust II</option></select>
+        <div class="checkbox-row">
+          <input type="checkbox" id="menu-backfill" checked />
+          <label for="menu-backfill" style="margin:0">Backfill with bots if a player leaves</label>
+        </div>
+        <button id="menu-create" class="secondary">Create Room</button>
+
+        <hr />
+
+        <label for="menu-join-code">Join by code</label>
+        <div class="row">
+          <input type="text" id="menu-join-code" maxlength="4" placeholder="ABCD" style="text-transform:uppercase" />
+          <button id="menu-join" class="secondary">Join</button>
+        </div>
+
+        <label>Open rooms</label>
+        <div id="menu-rooms"><div id="menu-rooms-empty">No open rooms — create one!</div></div>
+
+        <div id="menu-error"></div>
+      </div>
+    </div>
+
     <div id="game"></div>
+    <div id="chat-log"></div>
+    <input type="text" id="chat-input" maxlength="240" placeholder="Press Enter to chat, Esc to cancel" />
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

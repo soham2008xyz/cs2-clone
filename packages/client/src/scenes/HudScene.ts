@@ -53,6 +53,9 @@ export class HudScene extends Phaser.Scene {
   private scorePanel!: Phaser.GameObjects.Container;
   private roster: RosterEntry[] = [];
   private lastSelf: SelfPayload | null = null;
+  private pingText!: Phaser.GameObjects.Text;
+  private teamHintText!: Phaser.GameObjects.Text;
+  private matchEndPanel!: Phaser.GameObjects.Container;
 
   constructor() {
     super('Hud');
@@ -77,9 +80,15 @@ export class HudScene extends Phaser.Scene {
     this.progressBar = this.add.graphics();
     this.crosshair = this.add.graphics();
     this.hitmarker = this.add.graphics();
+    this.pingText = this.add.text(0, 0, '', { ...style, fontSize: '11px', color: '#888888' }).setOrigin(1, 0);
+    this.teamHintText = this.add
+      .text(0, 0, '[ = Join T    ] = Join CT', { ...style, fontSize: '13px', color: '#cccccc' })
+      .setOrigin(0.5)
+      .setShadow(1, 1, '#000', 2);
 
     this.buildBuyPanel('T');
     this.scorePanel = this.add.container(0, 0).setVisible(false);
+    this.matchEndPanel = this.add.container(0, 0).setVisible(false).setDepth(150);
 
     this.input.keyboard!.on('keydown-B', () => this.toggleBuy());
     this.input.keyboard!.on('keydown-TAB', (e: KeyboardEvent) => {
@@ -96,6 +105,8 @@ export class HudScene extends Phaser.Scene {
     this.game.events.on('hud:banner', this.onBanner, this);
     this.game.events.on('hud:roster', this.onRoster, this);
     this.game.events.on('hud:spectate', this.onSpectate, this);
+    this.game.events.on('hud:ping', this.onPing, this);
+    this.game.events.on('hud:matchend', this.onMatchEnd, this);
     this.events.once('shutdown', () => {
       this.game.events.off('hud:self', this.onSelf, this);
       this.game.events.off('hud:kill', this.onKill, this);
@@ -104,6 +115,8 @@ export class HudScene extends Phaser.Scene {
       this.game.events.off('hud:banner', this.onBanner, this);
       this.game.events.off('hud:roster', this.onRoster, this);
       this.game.events.off('hud:spectate', this.onSpectate, this);
+      this.game.events.off('hud:ping', this.onPing, this);
+      this.game.events.off('hud:matchend', this.onMatchEnd, this);
     });
 
     this.scale.on('resize', () => this.layout());
@@ -125,6 +138,9 @@ export class HudScene extends Phaser.Scene {
     this.spectateText.setPosition(w / 2, h - 60);
     this.buyPanel?.setPosition(w / 2, h / 2);
     this.scorePanel?.setPosition(w / 2, h * 0.22);
+    this.pingText.setPosition(w - 16, 10);
+    this.teamHintText.setPosition(w / 2, 66);
+    this.matchEndPanel?.setPosition(w / 2, h / 2);
   }
 
   // ── buy menu ───────────────────────────────────────────────────────────────
@@ -221,6 +237,35 @@ export class HudScene extends Phaser.Scene {
     this.hitmarkerUntil = this.time.now + 90;
   }
 
+  private onPing(ms: number): void {
+    this.pingText.setText(`${ms}ms`);
+  }
+
+  private onMatchEnd(payload: { winner: TeamId; roster: RosterEntry[] }): void {
+    this.matchEndPanel.removeAll(true);
+    const width = 380;
+    const sorted = [...payload.roster].sort((a, b) => b.k - a.k);
+    const height = sorted.length * 20 + 90;
+    this.matchEndPanel.add(this.add.rectangle(0, 0, width, height, 0x0a0a0a, 0.92).setStrokeStyle(1, 0x555555));
+    const color = payload.winner === 'T' ? '#ffd280' : '#9cc4ff';
+    this.matchEndPanel.add(
+      this.add
+        .text(0, -height / 2 + 20, `${payload.winner === 'T' ? 'TERRORISTS' : 'COUNTER-TERRORISTS'} WIN`, { fontFamily: MONO, fontSize: '18px', color })
+        .setOrigin(0.5),
+    );
+    this.matchEndPanel.add(
+      this.add.text(0, -height / 2 + 44, 'returning to menu…', { fontFamily: MONO, fontSize: '12px', color: '#888888' }).setOrigin(0.5),
+    );
+    sorted.forEach((p, i) => {
+      const y = -height / 2 + 70 + i * 20;
+      const teamColor = p.team === 'T' ? '#ffd280' : '#9cc4ff';
+      this.matchEndPanel.add(this.add.text(-width / 2 + 20, y, `${p.name}${p.bot ? ' (bot)' : ''}`, { fontFamily: MONO, fontSize: '13px', color: teamColor }).setOrigin(0, 0.5));
+      this.matchEndPanel.add(this.add.text(width / 2 - 20, y, `${p.k} / ${p.d}`, { fontFamily: MONO, fontSize: '13px', color: '#cccccc' }).setOrigin(1, 0.5));
+    });
+    this.matchEndPanel.setVisible(true);
+    this.layout();
+  }
+
   private onSelf(payload: SelfPayload): void {
     const teamChanged = this.lastSelf?.team !== payload.team;
     this.lastSelf = payload;
@@ -256,6 +301,7 @@ export class HudScene extends Phaser.Scene {
       const secs = Math.ceil(match.end / 60);
       const mm = Math.floor(secs / 60);
       const ss = (secs % 60).toString().padStart(2, '0');
+      this.teamHintText.setVisible(match.ph === 'waiting');
       switch (match.ph) {
         case 'waiting':
           this.timerText.setText('WARMUP').setColor('#aaaaaa');
