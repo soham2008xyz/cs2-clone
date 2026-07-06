@@ -21,6 +21,8 @@ import {
   type ZoneSnap,
 } from '@cs2d/shared';
 import { playerTexture } from './BootScene.js';
+import { sfx } from '../audio/sfx.js';
+import { toggleMute, unlockAudio } from '../audio/synth.js';
 import { appendChatLine, initChat } from '../chat.js';
 import { Connection, serverUrl } from '../net/connection.js';
 import { Predictor } from '../net/prediction.js';
@@ -84,6 +86,9 @@ export class GameScene extends Phaser.Scene {
   private spectateTarget = -1;
   private chatOpen = false;
   private pingTimer?: Phaser.Time.TimerEvent;
+  private listener = { x: 0, y: 0 }; // positional-audio ear (camera subject)
+  private nextBeepAt = 0;
+  private wasReloading = false;
 
   constructor() {
     super('Game');
@@ -121,6 +126,10 @@ export class GameScene extends Phaser.Scene {
     this.input.keyboard!.on('keydown-THREE', () => (this.pendingSlot = 3));
     this.input.keyboard!.on('keydown-FOUR', () => (this.pendingSlot = 4));
     this.input.keyboard!.on('keydown-SPACE', () => this.spectateIndex++);
+    this.input.keyboard!.on('keydown-M', () => {
+      if (!this.chatOpen) toggleMute();
+    });
+    this.input.once('pointerdown', () => unlockAudio()); // browsers gate audio behind a gesture
     this.input.keyboard!.on('keydown-OPEN_BRACKET', () => this.conn.send({ t: 'team', team: 'T' }));
     this.input.keyboard!.on('keydown-CLOSED_BRACKET', () => this.conn.send({ t: 'team', team: 'CT' }));
     this.game.events.on('buy', this.onBuy, this);
@@ -167,6 +176,9 @@ export class GameScene extends Phaser.Scene {
       this.groundItems = msg.g ?? [];
       this.nades = msg.n ?? [];
       this.zones = msg.z ?? [];
+      const reloading = (msg.me?.reload ?? 0) > 0;
+      if (reloading && !this.wasReloading) sfx('reload');
+      this.wasReloading = reloading;
       const self = msg.p.find(([id]) => id === this.myId);
       if (self) {
         this.myHp = self[4];
@@ -233,9 +245,12 @@ export class GameScene extends Phaser.Scene {
     switch (ev.e) {
       case 'shot': {
         this.tracers.push({ x: ev.x, y: ev.y, tx: ev.tx, ty: ev.ty, until: this.time.now + 70 });
+        const cls = getWeapon(ev.w).cls;
+        sfx(`shot_${cls}`, { x: ev.x, y: ev.y }, this.listener);
         break;
       }
       case 'kill':
+        if (ev.k === this.myId) sfx('kill');
         this.game.events.emit('hud:kill', {
           killer: ev.k === 0 ? '' : this.nameOf(ev.k), // 0 = world (C4, unowned fire)
           victim: this.nameOf(ev.v),
@@ -246,9 +261,11 @@ export class GameScene extends Phaser.Scene {
         break;
       case 'hit':
         this.game.events.emit('hud:hitmarker');
+        sfx('hit');
         break;
       case 'hurt':
         this.game.events.emit('hud:hurt', ev.d);
+        sfx('hurt');
         break;
       case 'exploded': {
         // screen shake + flash at the bomb site
@@ -256,21 +273,27 @@ export class GameScene extends Phaser.Scene {
         const boom = this.add.circle(ev.x, ev.y, 40, 0xffcc66, 0.9).setDepth(30);
         this.tweens.add({ targets: boom, radius: 320, alpha: 0, duration: 550, onComplete: () => boom.destroy() });
         this.game.events.emit('hud:banner', { text: 'THE BOMB HAS EXPLODED', color: '#ffb066', ttl: 3500 });
+        sfx('c4_explosion'); // heard map-wide
         break;
       }
       case 'planted':
         this.game.events.emit('hud:banner', { text: 'THE BOMB HAS BEEN PLANTED', color: '#ff8866', ttl: 3500 });
+        sfx('plant', { x: ev.x, y: ev.y }, this.listener);
+        this.nextBeepAt = 0;
         break;
       case 'defused':
         this.game.events.emit('hud:banner', { text: 'BOMB DEFUSED', color: '#7db8ff', ttl: 3500 });
+        sfx('defused');
         break;
       case 'round_start':
         this.game.events.emit('hud:banner', { text: `ROUND ${ev.rn}`, color: '#ffffff', ttl: 2000 });
+        sfx('round_start');
         break;
       case 'round_end': {
         const label = ev.winner === 'T' ? 'TERRORISTS WIN' : 'COUNTER-TERRORISTS WIN';
         const color = ev.winner === 'T' ? '#ffd280' : '#9cc4ff';
         this.game.events.emit('hud:banner', { text: label, color, ttl: 5000 });
+        sfx(ev.winner === this.myTeam ? 'round_win' : 'round_lose');
         break;
       }
       case 'swap':
@@ -290,21 +313,27 @@ export class GameScene extends Phaser.Scene {
         const boom = this.add.circle(ev.x, ev.y, 20, 0xffcc66, 0.85).setDepth(30);
         this.tweens.add({ targets: boom, radius: 130, alpha: 0, duration: 350, onComplete: () => boom.destroy() });
         if (Math.hypot(ev.x - this.predictor.pos.x, ev.y - this.predictor.pos.y) < 250) this.cameras.main.shake(180, 0.006);
+        sfx('he_boom', { x: ev.x, y: ev.y }, this.listener);
         break;
       }
       case 'flash_pop': {
         const pop = this.add.circle(ev.x, ev.y, 10, 0xffffff, 0.95).setDepth(30);
         this.tweens.add({ targets: pop, radius: 40, alpha: 0, duration: 250, onComplete: () => pop.destroy() });
+        sfx('flash_pop', { x: ev.x, y: ev.y }, this.listener);
         break;
       }
       case 'smoke_pop':
+        sfx('smoke_pop', { x: ev.x, y: ev.y }, this.listener);
+        break; // cloud itself renders from the zone snapshot
       case 'molotov_ignite':
-        break; // rendered continuously from the zone snapshot instead
+        sfx('molly_ignite', { x: ev.x, y: ev.y }, this.listener);
+        break; // fire renders from the zone snapshot
     }
   }
 
   private onBuy(item: string): void {
     this.conn.send({ t: 'buy', item });
+    sfx('buy');
   }
 
   private applyRoster(entries: RosterEntry[]): void {
@@ -421,6 +450,8 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
+    this.listener = { x: visionOrigin.x, y: visionOrigin.y };
+
     // bomb rendering (dropped or planted)
     if (this.match?.bomb) {
       const [bx, by, planted] = this.match.bomb;
@@ -428,6 +459,13 @@ export class GameScene extends Phaser.Scene {
       if (planted === 1) {
         const blink = Math.floor(this.time.now / 350) % 2 === 0;
         this.bombSprite.setTint(blink ? 0xff4444 : 0xffffff);
+        // beep accelerates as the timer runs down: ~1s apart -> ~0.15s
+        const secsLeft = (this.match.end ?? 0) / TICK_RATE;
+        const interval = 150 + 850 * Math.min(1, Math.max(0, secsLeft / 40));
+        if (this.time.now >= this.nextBeepAt) {
+          sfx('bomb_beep', { x: bx, y: by }, this.listener);
+          this.nextBeepAt = this.time.now + interval;
+        }
       } else {
         this.bombSprite.clearTint();
       }
