@@ -275,6 +275,27 @@ describe('gameplay features', () => {
     expect(b.secondary?.id).toBe('glock'); // pistols are picked up too
   });
 
+  it('pressing 4 while holding a grenade cycles the carried nades', () => {
+    const { room, send } = liveRoom();
+    const t = room.addPlayer(null, 'T1', 'T');
+    room.addPlayer(null, 'CT1', 'CT');
+    stepUntil(room, () => room.phase === 'live');
+
+    t.nades = ['smoke', 'flash', 'he'];
+    send(t.id, 0, { w: 4 }); // draw the grenade slot (no rotation)
+    step(room, 1);
+    expect(t.nades).toEqual(['smoke', 'flash', 'he']);
+
+    send(t.id, 0, { w: 4 }); // already on slot 4: cycle
+    step(room, 1);
+    expect(t.nades).toEqual(['flash', 'he', 'smoke']);
+
+    send(t.id, BTN.ATTACK); // throws the cycled-to front nade
+    step(room, 1);
+    expect([...guts(room).activeNades.values()][0]?.kind).toBe('flash');
+    expect(t.nades).toEqual(['he', 'smoke']);
+  });
+
   it('a survivor with no pistol keeps their primary and gets a fresh pistol next round', () => {
     const { room } = liveRoom();
     const a = room.addPlayer(null, 'A', 'T');

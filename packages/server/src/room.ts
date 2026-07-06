@@ -799,7 +799,11 @@ export class Room {
   }
 
   private switchSlot(p: PlayerConn, slot: number): void {
-    if (slot === p.activeSlot) return;
+    if (slot === p.activeSlot) {
+      // pressing 4 while already holding a grenade cycles the carried nades
+      if (slot === 4 && p.nades.length > 1) p.nades.push(p.nades.shift()!);
+      return;
+    }
     if (slot === 1 && !p.primary) return;
     if (slot === 2 && !p.secondary) return;
     if (slot === 4 && p.nades.length === 0) return;
