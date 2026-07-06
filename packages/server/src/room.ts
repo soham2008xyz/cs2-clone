@@ -86,6 +86,7 @@ const WARMUP_RESPAWN_TICKS = 3 * TICK_RATE;
 const MATCH_END_TICKS = 15 * TICK_RATE;
 const BOMB_EXPLOSION_RADIUS = 350;
 const BOMB_EXPLOSION_DAMAGE = 300;
+const BOMB_ARMOR_PEN = 0.6;
 const DEFUSE_RADIUS = 56;
 
 const sec = (s: number): number => Math.round(s * TICK_RATE);
@@ -262,9 +263,9 @@ export class Room {
     return { ...spawns[index % spawns.length] };
   }
 
+  /** Assigns the team's default pistol; leaves any held primary untouched. */
   private givePistolLoadout(p: PlayerConn): void {
     const pistol = getWeapon(DEFAULT_PISTOL[p.team]);
-    p.primary = null;
     p.secondary = { id: pistol.id, ammo: pistol.magazine, reserve: pistol.reserve };
     p.activeSlot = 2;
   }
@@ -333,6 +334,7 @@ export class Room {
     p.team = team;
     const teamCount = this.teamPlayers(team).length - 1;
     p.pos = this.spawnPos(team, Math.max(0, teamCount));
+    p.primary = null; // switching sides resets the loadout
     this.givePistolLoadout(p);
     this.broadcastRoster();
   }
@@ -508,6 +510,18 @@ export class Room {
     p.reloadEndTick = 0;
   }
 
+  /** Death drop: both carried guns fall where the victim died. */
+  private dropCarriedGuns(p: PlayerConn): void {
+    if (p.primary) {
+      this.dropWeapon(p, p.primary);
+      p.primary = null;
+    }
+    if (p.secondary) {
+      this.dropWeapon(p, p.secondary);
+      p.secondary = null;
+    }
+  }
+
   private dropBomb(p: PlayerConn): void {
     if (!p.hasBomb) return;
     p.hasBomb = false;
@@ -588,7 +602,7 @@ export class Room {
       const d = dist(p.pos, this.bomb.pos);
       if (d > BOMB_EXPLOSION_RADIUS) continue;
       const raw = BOMB_EXPLOSION_DAMAGE * (1 - d / BOMB_EXPLOSION_RADIUS);
-      const { hpDamage, armor } = applyArmor(raw, p.armor, penVs(p, 0.6));
+      const { hpDamage, armor } = applyArmor(raw, p.armor, penVs(p, BOMB_ARMOR_PEN));
       p.armor = armor;
       p.hp -= hpDamage;
       if (p.hp <= 0) {
@@ -830,10 +844,7 @@ export class Room {
       credited.money = clampMoney(credited.money + getGrenade(weaponId).killReward);
     }
     this.emit({ e: 'kill', k: credited?.id ?? 0, v: victim.id, w: weaponId });
-    if (victim.primary) {
-      this.dropWeapon(victim, victim.primary);
-      victim.primary = null;
-    }
+    this.dropCarriedGuns(victim);
     if (victim.hasBomb) this.dropBomb(victim);
     if (this.phase === 'waiting') victim.respawnTick = this.tick + WARMUP_RESPAWN_TICKS;
     this.broadcastRoster();
@@ -984,11 +995,8 @@ export class Room {
     killer.money = clampMoney(killer.money + weapon.killReward);
     this.emit({ e: 'kill', k: killer.id, v: victim.id, w: weapon.id });
 
-    // drop primary + bomb where they died
-    if (victim.primary) {
-      this.dropWeapon(victim, victim.primary);
-      victim.primary = null;
-    }
+    // drop both guns + bomb where they died
+    this.dropCarriedGuns(victim);
     if (victim.hasBomb) this.dropBomb(victim);
 
     if (this.phase === 'waiting') {
@@ -1035,6 +1043,7 @@ export class Room {
         p.bloom = 0;
         p.respawnTick = 0;
         p.pos = this.spawnPos(p.team, Math.floor(this.rng() * 10));
+        p.primary = null; // warmup respawn = fresh pistol loadout
         this.givePistolLoadout(p);
       }
 

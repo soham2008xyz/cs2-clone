@@ -275,6 +275,46 @@ describe('gameplay features', () => {
     expect(b.secondary?.id).toBe('glock'); // pistols are picked up too
   });
 
+  it('a survivor with no pistol keeps their primary and gets a fresh pistol next round', () => {
+    const { room } = liveRoom();
+    const a = room.addPlayer(null, 'A', 'T');
+    const ct = room.addPlayer(null, 'CT1', 'CT');
+    stepUntil(room, () => room.phase === 'live');
+
+    a.primary = { id: 'ak47', ammo: 30, reserve: 90 };
+    a.activeSlot = 1;
+    a.secondary = null; // dropped the pistol earlier in the round
+
+    ct.hp = 0;
+    ct.alive = false; // T wins by elimination; A survives into round 2
+    stepUntil(room, () => room.phase === 'freeze' && guts(room).roundNumber === 2);
+
+    expect(a.primary?.id).toBe('ak47'); // rifle survives the round
+    expect(a.secondary?.id).toBe('glock'); // missing pistol restocked
+    expect(a.activeSlot).toBe(1);
+  });
+
+  it('death drops both carried guns, not just the primary', () => {
+    const { room } = liveRoom();
+    const victim = room.addPlayer(null, 'V', 'T');
+    room.addPlayer(null, 'T2', 'T');
+    const owner = room.addPlayer(null, 'CT1', 'CT');
+    stepUntil(room, () => room.phase === 'live');
+
+    victim.primary = { id: 'ak47', ammo: 30, reserve: 90 };
+    victim.secondary = { id: 'deagle', ammo: 7, reserve: 35 };
+    victim.hp = 0.4; // one fire tick kills
+    guts(room).fires.set(201, {
+      id: 201, kind: 'molotov', pos: { ...victim.pos }, untilTick: room.tick + 600,
+      ownerId: owner.id, ownerTeam: 'CT',
+    });
+    step(room, 1);
+
+    expect(victim.alive).toBe(false);
+    const dropped = [...guts(room).groundItems.values()].map((g) => g.weaponId).sort();
+    expect(dropped).toEqual(['ak47', 'deagle']);
+  });
+
   it('smoke blooms where it rests instead of on a mid-flight timer', () => {
     const { room, send } = liveRoom();
     const t = room.addPlayer(null, 'T1', 'T');
