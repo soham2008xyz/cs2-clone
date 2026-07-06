@@ -39,6 +39,8 @@ wss.on('connection', (ws: WebSocket) => {
       room.handleInput(playerId, msg);
     } else if (msg.t === 'buy' && playerId !== null) {
       room.handleBuy(playerId, msg.item);
+    } else if (msg.t === 'bots' && playerId !== null) {
+      room.fillBots(Math.min(5, Math.max(1, msg.perTeam ?? 5)), msg.difficulty ?? 'normal');
     }
   });
 

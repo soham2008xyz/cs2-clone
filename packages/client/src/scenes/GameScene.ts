@@ -168,10 +168,20 @@ export class GameScene extends Phaser.Scene {
       this.statusText.setText('disconnected — is the server running?  (npm run dev:server)').setVisible(true);
     };
 
-    const name = new URLSearchParams(location.search).get('name') ?? `Player${Math.floor(Math.random() * 1000)}`;
+    const params = new URLSearchParams(location.search);
+    const name = params.get('name') ?? `Player${Math.floor(Math.random() * 1000)}`;
     this.conn
       .connect(serverUrl())
-      .then(() => this.conn.send({ t: 'join', name }))
+      .then(() => {
+        this.conn.send({ t: 'join', name });
+        // "Play vs Bots" entry point (?bots=1 or ?bots=easy|normal|hard) —
+        // full lobby UI with a proper button comes in the multiplayer-polish phase
+        const bots = params.get('bots');
+        if (bots) {
+          const difficulty = (['easy', 'normal', 'hard'] as const).includes(bots as never) ? (bots as 'easy' | 'normal' | 'hard') : 'normal';
+          this.conn.send({ t: 'bots', perTeam: 5, difficulty });
+        }
+      })
       .catch(() => {
         this.statusText.setText('cannot reach server — start it with: npm run dev:server').setVisible(true);
       });

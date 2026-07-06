@@ -74,6 +74,7 @@ import {
   type WeaponDef,
   type ZoneSnap,
 } from '@cs2d/shared';
+import { BotController, type BotDifficulty } from './bots/bot.js';
 import { LagCompensator } from './lagcomp.js';
 
 const SNAPSHOT_EVERY = Math.round(TICK_RATE / SNAPSHOT_RATE);
@@ -201,6 +202,8 @@ export class Room {
   private fires = new Map<number, FireZone>();
   private nextNadeId = 1;
   private nextZoneId = 1;
+  private bots = new Map<number, BotController>();
+  private nextBotName = 1;
 
   private nextId = 1;
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -297,7 +300,30 @@ export class Room {
     const p = this.players.get(id);
     if (p?.hasBomb) this.dropBomb(p);
     this.players.delete(id);
+    this.bots.delete(id);
     this.broadcastRoster();
+  }
+
+  /** Public read surface for bot AI (kept separate from the private simulation fields above). */
+  get bombInfo(): { pos: Vec2; mode: BombState['mode'] } {
+    return { pos: this.bomb.pos, mode: this.bomb.mode };
+  }
+
+  get smokeOccluders(): Occluder[] {
+    return [...this.smokes.values()].map((s) => ({ pos: s.pos, radius: this.smokeRadius(s) }));
+  }
+
+  addBot(team?: TeamId, difficulty: BotDifficulty = 'normal'): PlayerConn {
+    const p = this.addPlayer(null, `Bot_${this.nextBotName++}`, team);
+    this.bots.set(p.id, new BotController(p.id, difficulty));
+    return p;
+  }
+
+  /** Fills both teams up to `perTeam` total players (humans + bots), adding bots only. */
+  fillBots(perTeam: number, difficulty: BotDifficulty = 'normal'): void {
+    for (const team of ['T', 'CT'] as const) {
+      while (this.teamPlayers(team).length < perTeam) this.addBot(team, difficulty);
+    }
   }
 
   handleInput(id: number, msg: InputMsg): void {
@@ -885,6 +911,8 @@ export class Room {
     }
 
     const canMove = this.phase !== 'freeze';
+
+    for (const bot of this.bots.values()) bot.think(this, this.tick);
 
     for (const p of this.players.values()) {
       if (this.phase === 'waiting' && !p.alive && p.respawnTick > 0 && this.tick >= p.respawnTick) {

@@ -33,7 +33,13 @@ export interface BuyMsg {
   item: string; // weapon id or 'kevlar' | 'helmet' | 'kit' | grenade id
 }
 
-export type ClientMsg = JoinMsg | InputMsg | BuyMsg;
+export interface FillBotsMsg {
+  t: 'bots';
+  perTeam?: number; // total players per team, humans + bots (default 5)
+  difficulty?: 'easy' | 'normal' | 'hard';
+}
+
+export type ClientMsg = JoinMsg | InputMsg | BuyMsg | FillBotsMsg;
 
 // ── Server → client ──────────────────────────────────────────────────────────
 
