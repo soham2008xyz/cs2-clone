@@ -115,6 +115,15 @@ describe('flash blind', () => {
     expect(hits).toHaveLength(0);
   });
 
+  it('no blind beyond FLASH_RANGE even with a clear line of sight', () => {
+    const pop = at(2, 2);
+    // same open row as pop (no wall until x=15 tiles down at y=4-8), but far
+    // enough east that the straight-line distance exceeds FLASH_RANGE (500px)
+    const farButVisible = { id: 1, pos: at(25, 2), aim: Math.PI, alive: true };
+    const hits = resolveFlashBlind(pop, [farButVisible], map);
+    expect(hits).toHaveLength(0);
+  });
+
   it('smoke blocks flash LOS too', () => {
     const pop = at(2, 2);
     const target = { id: 1, pos: at(10, 2), aim: Math.PI, alive: true };

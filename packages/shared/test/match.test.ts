@@ -6,8 +6,10 @@ import {
   matchTarget,
   matchWinner,
   overtimeIndex,
+  totalRounds,
 } from '../src/sim/match.js';
-import { lossBonus, roundPayout } from '../src/sim/economy.js';
+import { clampMoney, lossBonus, roundPayout, winReward } from '../src/sim/economy.js';
+import { MAX_MONEY, REWARD_WIN_ELIMINATION, REWARD_WIN_TIME } from '../src/constants.js';
 
 describe('MR12 structure', () => {
   it('pistol rounds are 1 and 13', () => {
@@ -94,5 +96,23 @@ describe('economy', () => {
     const r = roundPayout('bomb_exploded', { T: 0, CT: 0 }, true);
     expect(r.winner).toBe('T');
     expect(r.winnerMoney).toBe(3500);
+  });
+
+  it('clampMoney bounds to [0, MAX_MONEY]', () => {
+    expect(clampMoney(-500)).toBe(0);
+    expect(clampMoney(9000)).toBe(9000);
+    expect(clampMoney(MAX_MONEY + 5000)).toBe(MAX_MONEY);
+  });
+
+  it('winReward pays the time-win reward for a time-out round', () => {
+    expect(winReward('time')).toBe(REWARD_WIN_TIME);
+    expect(winReward('elimination_t')).toBe(REWARD_WIN_ELIMINATION);
+  });
+});
+
+describe('totalRounds', () => {
+  it('sums both teams', () => {
+    expect(totalRounds({ T: 7, CT: 5 })).toBe(12);
+    expect(totalRounds({ T: 0, CT: 0 })).toBe(0);
   });
 });

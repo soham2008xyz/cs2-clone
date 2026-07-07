@@ -32,6 +32,14 @@ describe('movement', () => {
     expect(p1.y).toBe(p0.y);
   });
 
+  it('weapon mobility scales speed (heavier weapons are slower)', () => {
+    const map = room();
+    const p0 = { x: 5 * TILE_SIZE, y: 5 * TILE_SIZE };
+    const p1 = stepMovement(p0, btn({ right: true }), 0.5, map, 1 / 60);
+    expect(p1.x - p0.x).toBeCloseTo((RUN_SPEED * 0.5) / 60, 5);
+    expect(p1.y).toBe(p0.y);
+  });
+
   it('walk is slower than run', () => {
     const map = room();
     const p0 = { x: 5 * TILE_SIZE, y: 5 * TILE_SIZE };

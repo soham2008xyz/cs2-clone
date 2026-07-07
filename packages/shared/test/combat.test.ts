@@ -76,6 +76,27 @@ describe('traceShot', () => {
     expect(r.hit).toBeNull();
   });
 
+  it('hits teammates when friendly fire is enabled', () => {
+    const shooter = at(2, 2);
+    const mate = { id: 1, pos: at(8, 2), team: 'T' as const, alive: true };
+    const r = traceShot(shooter, 0, 0, ak, 'T', [mate], map, mulberry32(1), true);
+    expect(r.hit?.targetId).toBe(1);
+  });
+
+  it('a target overlapping the shooter is not hit (dist<=0 guard)', () => {
+    const shooter = at(2, 2);
+    const onTopOfShooter = { id: 1, pos: { ...shooter }, team: 'CT' as const, alive: true };
+    const r = traceShot(shooter, 0, 0, ak, 'T', [onTopOfShooter], map, mulberry32(1));
+    expect(r.hit).toBeNull();
+  });
+
+  it('a target directly behind the shooter is not hit', () => {
+    const shooter = at(10, 2);
+    const behind = { id: 1, pos: at(2, 2), team: 'CT' as const, alive: true }; // aim faces +x, target is to the west
+    const r = traceShot(shooter, 0, 0, ak, 'T', [behind], map, mulberry32(1));
+    expect(r.hit).toBeNull();
+  });
+
   it('knife cannot reach across the room', () => {
     const knife = getWeapon('knife');
     const shooter = at(2, 2);
@@ -103,12 +124,27 @@ describe('vision', () => {
   });
 
   it('visibility polygon stays within walls', () => {
-    const poly = visibilityPolygon(at(2, 6), map);
+    const origin = at(2, 6);
+    const poly = visibilityPolygon(origin, map);
     expect(poly.length).toBeGreaterThan(100);
     for (const p of poly) {
-      // no vertex may sit deep inside a solid tile (small epsilon for boundary points)
-      expect(p.x).toBeGreaterThanOrEqual(TILE_SIZE - 1);
-      expect(p.x).toBeLessThanOrEqual(29 * TILE_SIZE + 1);
+      // whole polygon stays within the compiled map bounds on both axes
+      expect(p.x).toBeGreaterThanOrEqual(-1);
+      expect(p.x).toBeLessThanOrEqual(30 * TILE_SIZE + 1);
+      expect(p.y).toBeGreaterThanOrEqual(-1);
+      expect(p.y).toBeLessThanOrEqual(10 * TILE_SIZE + 1);
+      // pull back 2px from the vertex toward the origin before checking
+      // solidity: vertices sit exactly on a wall boundary by construction
+      // (raycast hit points), so testing the boundary itself is flaky by
+      // rounding direction — testing just inside it catches a vertex that
+      // sits deep inside a solid tile without false-failing on the boundary
+      const dx = p.x - origin.x;
+      const dy = p.y - origin.y;
+      const t = Math.hypot(dx, dy);
+      if (t > 2) {
+        const shrink = (t - 2) / t;
+        expect(map.isSolidAt(origin.x + dx * shrink, origin.y + dy * shrink)).toBe(false);
+      }
     }
   });
 });

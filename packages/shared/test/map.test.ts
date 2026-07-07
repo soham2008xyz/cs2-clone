@@ -103,3 +103,25 @@ describe('dust2', () => {
     expect(map.siteAt(map.spawns.T[0].x, map.spawns.T[0].y)).toBeNull();
   });
 });
+
+// testarena is what scripts/integration-round.mjs and integration-bots.mjs run
+// against — a scoped-down sanity check guards against accidental map-def
+// breakage without duplicating the full dust2 suite above.
+describe('testarena', () => {
+  const map = getMap('testarena');
+
+  it('compiles with 5 spawns per team, all on walkable tiles', () => {
+    expect(map.spawns.T).toHaveLength(5);
+    expect(map.spawns.CT).toHaveLength(5);
+    for (const s of [...map.spawns.T, ...map.spawns.CT]) {
+      expect(map.isSolidAt(s.x, s.y)).toBe(false);
+    }
+  });
+
+  it('site A is reachable from T spawn', () => {
+    const tSpawn = map.spawns.T[0];
+    const reach = flood(map, tSpawn.x, tSpawn.y);
+    expect(map.isSolidAt(map.siteCenters.A.x, map.siteCenters.A.y)).toBe(false);
+    expect(reach.has(tileIndexAt(map, map.siteCenters.A.x, map.siteCenters.A.y))).toBe(true);
+  });
+});
