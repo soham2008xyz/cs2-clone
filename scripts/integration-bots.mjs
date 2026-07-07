@@ -19,7 +19,10 @@ let ws;
 function cleanup() {
   ws?.close();
   server?.kill();
-  setTimeout(() => process.exit(), 300);
+  setTimeout(() => {
+    server?.kill('SIGKILL'); // don't leave a lingering process holding the port
+    process.exit();
+  }, 300);
 }
 
 async function waitFor(desc, cond, timeoutMs = 20000) {
@@ -33,12 +36,31 @@ async function waitFor(desc, cond, timeoutMs = 20000) {
 }
 
 async function main() {
-  server = spawn('npx', ['tsx', 'packages/server/src/index.ts'], {
+  // spawn tsx directly (not via npx): no wrapper cold-start, and kill()
+  // reaches the node process that actually holds the port
+  server = spawn('node_modules/.bin/tsx', ['packages/server/src/index.ts'], {
     env: { ...process.env, PORT: String(PORT), CS2D_FAST: '1' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  server.stderr.on('data', (d) => process.stdout.write(`[srv-err] ${d}`));
-  await waitFor('server up', () => fetch(`http://localhost:${PORT}`).then(() => true).catch(() => false), 15000);
+  const srvTail = [];
+  const logSrv = (tag) => (d) => {
+    srvTail.push(String(d));
+    if (srvTail.length > 40) srvTail.shift();
+    if (tag === 'srv-err') process.stdout.write(`[${tag}] ${d}`);
+  };
+  server.stdout.on('data', logSrv('srv'));
+  server.stderr.on('data', logSrv('srv-err'));
+  let serverExit = null;
+  server.on('exit', (code, signal) => (serverExit = { code, signal }));
+  // cold tsx compile on a loaded machine can take well over 15s
+  await waitFor('server up', () => {
+    if (serverExit) {
+      throw new Error(
+        `server exited before ready (code ${serverExit.code}, signal ${serverExit.signal})\n${srvTail.join('')}`,
+      );
+    }
+    return fetch(`http://localhost:${PORT}`).then(() => true).catch(() => false);
+  }, 60000);
   await sleep(200);
 
   const createRes = await fetch(`http://localhost:${PORT}/rooms`, {
@@ -92,7 +114,8 @@ async function main() {
   const reasons = new Set(state.rounds.map((r) => r.reason));
   ok(`round end reasons observed: ${[...reasons].join(', ')}`);
 
-  // sanity: both a T-side and a CT-side win occurred somewhere (bots on both teams are competent)
+  // informational only, not asserted: a 4-round sample is too small to require
+  // both sides to win without making this flaky (a legitimate sweep is possible)
   const tWins = state.rounds.filter((r) => r.winner === 'T').length;
   const ctWins = state.rounds.filter((r) => r.winner === 'CT').length;
   console.log(`  T wins: ${tWins}, CT wins: ${ctWins} (over ${state.rounds.length} rounds)`);
