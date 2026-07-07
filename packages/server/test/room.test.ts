@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { WebSocket } from 'ws';
-import { BTN, MOLOTOV_DPS, TICK_DT, type GameEvent, type SnapshotMsg, type TeamId } from '@cs2d/shared';
+import { BTN, MOLOTOV_DPS, OT_MONEY, PICKUP_RADIUS, TICK_DT, type GameEvent, type SnapshotMsg, type TeamId } from '@cs2d/shared';
 import { Room, type PlayerConn } from '../src/room.js';
 
 // Fast timings (seconds); sec() rounds to ticks: freeze=3, plant=6, defuse=12, roundEnd=6, bomb=60.
@@ -26,9 +26,10 @@ interface RoomInternals {
   activeNades: Map<number, NadeLike>;
   smokes: Map<number, unknown>;
   groundItems: Map<number, { weaponId: string }>;
-  bomb: { mode: string; pos: { x: number; y: number }; explodeTick: number };
+  bomb: { mode: string; pos: { x: number; y: number }; carrierId: number; explodeTick: number };
   phaseEndTick: number;
   roundNumber: number;
+  afterRoundEnd(): void;
 }
 
 const guts = (r: Room): RoomInternals => r as unknown as RoomInternals;
@@ -137,9 +138,9 @@ describe('round flow', () => {
     expect(tDead.money).toBe(deadMoney + 1400); // first-loss bonus
   });
 
-  it('defuse kit is lost on death; loss streaks reset on pistol rounds', () => {
+  it('defuse kit is lost on death; loss streaks reset and sides swap on the halftime pistol round', () => {
     const { room } = liveRoom();
-    room.addPlayer(null, 'T1', 'T');
+    const t = room.addPlayer(null, 'T1', 'T');
     const ct = room.addPlayer(null, 'CT1', 'CT');
     stepUntil(room, () => room.phase === 'live');
 
@@ -151,8 +152,12 @@ describe('round flow', () => {
 
     guts(room).roundNumber = 12;
     guts(room).streaks = { T: 4, CT: 1 };
+    room.score = { T: 9, CT: 3 };
     guts(room).startRound(); // halftime pistol (round 13)
     expect(guts(room).streaks).toEqual({ T: 0, CT: 0 });
+    expect(t.team).toBe('CT'); // players swap sides...
+    expect(ct.team).toBe('T');
+    expect(room.score).toEqual({ T: 3, CT: 9 }); // ...and scores follow the side, not the player
   });
 });
 
@@ -370,5 +375,219 @@ describe('gameplay features', () => {
 
     step(room, 15); // impact after ~4 ticks; old fuse was 96 ticks
     expect(guts(room).fires.size).toBe(1);
+  });
+});
+
+describe('reload interruption', () => {
+  it('is cancelled by switching weapon slots', () => {
+    const { room, send } = liveRoom();
+    const t = room.addPlayer(null, 'T1', 'T');
+    room.addPlayer(null, 'CT1', 'CT');
+    stepUntil(room, () => room.phase === 'live');
+
+    t.primary = { id: 'ak47', ammo: 0, reserve: 90 };
+    t.activeSlot = 1;
+    t.reloadEndTick = room.tick + 500;
+
+    send(t.id, 0, { w: 3 }); // switch to knife
+    step(room, 1);
+    expect(t.activeSlot).toBe(3);
+    expect(t.reloadEndTick).toBe(0);
+  });
+
+  it('is cancelled by dropping the active weapon', () => {
+    const { room, send } = liveRoom();
+    const t = room.addPlayer(null, 'T1', 'T');
+    room.addPlayer(null, 'CT1', 'CT');
+    stepUntil(room, () => room.phase === 'live');
+
+    t.primary = { id: 'ak47', ammo: 0, reserve: 90 };
+    t.activeSlot = 1;
+    t.reloadEndTick = room.tick + 500;
+
+    send(t.id, BTN.DROP);
+    step(room, 1);
+    expect(t.primary).toBeNull();
+    expect(t.reloadEndTick).toBe(0);
+  });
+
+  it('is cancelled by buying a replacement weapon', () => {
+    const { room } = liveRoom();
+    const t = room.addPlayer(null, 'T1', 'T');
+    room.addPlayer(null, 'CT1', 'CT');
+    stepUntil(room, () => room.phase === 'freeze'); // buy window: freeze + in buyzone (spawn)
+
+    t.primary = { id: 'ak47', ammo: 0, reserve: 90 };
+    t.activeSlot = 1;
+    t.reloadEndTick = room.tick + 500;
+    t.money = 3000;
+
+    room.handleBuy(t.id, 'galil'); // T-exclusive rifle
+    expect(t.primary?.id).toBe('galil');
+    expect(t.reloadEndTick).toBe(0);
+  });
+});
+
+describe('plant/defuse interruption', () => {
+  it('releasing USE mid-plant resets progress to zero', () => {
+    const { room, send } = liveRoom();
+    const t = room.addPlayer(null, 'T1', 'T');
+    room.addPlayer(null, 'CT1', 'CT');
+    stepUntil(room, () => room.phase === 'live');
+
+    t.pos = { ...room.map.siteCenters.A };
+    send(t.id, BTN.USE);
+    step(room, 1);
+    expect(t.actionStartTick).toBeGreaterThan(0);
+
+    send(t.id, 0); // release USE
+    step(room, 1);
+    expect(t.actionStartTick).toBe(0);
+  });
+
+  it('moving mid-defuse resets progress to zero', () => {
+    const { room, send } = liveRoom();
+    const t = room.addPlayer(null, 'T1', 'T');
+    const ct = room.addPlayer(null, 'CT1', 'CT');
+    stepUntil(room, () => room.phase === 'live');
+    plantBomb(room, send, t);
+
+    ct.pos = { ...guts(room).bomb.pos };
+    send(ct.id, BTN.USE);
+    step(room, 1);
+    expect(ct.actionStartTick).toBeGreaterThan(0);
+
+    send(ct.id, BTN.USE | BTN.RIGHT); // moving while still holding USE
+    step(room, 1);
+    expect(ct.actionStartTick).toBe(0);
+  });
+
+  it('rejects planting off-site regardless of how long USE is held', () => {
+    const { room, send } = liveRoom();
+    const t = room.addPlayer(null, 'T1', 'T');
+    room.addPlayer(null, 'CT1', 'CT');
+    stepUntil(room, () => room.phase === 'live');
+
+    t.pos = { x: 3.5 * 32, y: 3.5 * 32 }; // T spawn area, not site A
+    for (let i = 0; i < 20; i++) {
+      send(t.id, BTN.USE);
+      step(room, 1);
+    }
+    expect(room.phase).toBe('live'); // never transitions to planted
+    expect(t.actionStartTick).toBe(0);
+  });
+});
+
+describe('bomb carrier lifecycle', () => {
+  it('drops where the carrier died', () => {
+    const { room } = liveRoom();
+    const t = room.addPlayer(null, 'T1', 'T');
+    const owner = room.addPlayer(null, 'CT1', 'CT');
+    stepUntil(room, () => room.phase === 'live');
+
+    expect(t.hasBomb).toBe(true); // sole T carries
+    t.pos = { x: 222, y: 111 };
+    t.hp = 0.4; // one fire tick kills
+    guts(room).fires.set(301, {
+      id: 301, kind: 'molotov', pos: { ...t.pos }, untilTick: room.tick + 600,
+      ownerId: owner.id, ownerTeam: 'CT',
+    });
+    step(room, 1);
+
+    expect(t.alive).toBe(false);
+    expect(t.hasBomb).toBe(false);
+    expect(guts(room).bomb.mode).toBe('dropped');
+    expect(guts(room).bomb.pos).toEqual({ x: 222, y: 111 });
+  });
+
+  it('is only picked up by a nearby, alive T player', () => {
+    const { room } = liveRoom();
+    const otherT = room.addPlayer(null, 'T2', 'T');
+    const ct = room.addPlayer(null, 'CT1', 'CT');
+    stepUntil(room, () => room.phase === 'live');
+
+    otherT.hasBomb = false;
+    guts(room).bomb = { mode: 'dropped', pos: { x: 500, y: 200 }, carrierId: 0, explodeTick: 0 };
+
+    ct.pos = { ...guts(room).bomb.pos }; // wrong team, right on top
+    step(room, 1);
+    expect(guts(room).bomb.mode).toBe('dropped');
+
+    otherT.pos = { x: guts(room).bomb.pos.x + PICKUP_RADIUS + 10, y: guts(room).bomb.pos.y }; // right team, out of range
+    step(room, 1);
+    expect(guts(room).bomb.mode).toBe('dropped');
+
+    otherT.pos = { x: guts(room).bomb.pos.x + PICKUP_RADIUS - 1, y: guts(room).bomb.pos.y }; // right team, in range
+    step(room, 1);
+    expect(guts(room).bomb.mode).toBe('carried');
+    expect(otherT.hasBomb).toBe(true);
+  });
+});
+
+describe('match arc', () => {
+  it('overtime half start resets everyone to OT money', () => {
+    const { room } = liveRoom();
+    const t = room.addPlayer(null, 'T1', 'T');
+    const ct = room.addPlayer(null, 'CT1', 'CT');
+    stepUntil(room, () => room.phase === 'live');
+
+    t.money = 500;
+    ct.money = 16000;
+    guts(room).roundNumber = 24;
+    guts(room).startRound(); // OT1 half start (round 25)
+
+    expect(t.money).toBe(OT_MONEY);
+    expect(ct.money).toBe(OT_MONEY);
+  });
+
+  it('match_end fires and the phase locks once a team reaches the win target', () => {
+    const { room } = liveRoom();
+    const wsRec = fakeWs();
+    room.addPlayer(wsRec.ws, 'T1', 'T');
+    room.addPlayer(null, 'CT1', 'CT');
+    stepUntil(room, () => room.phase === 'live');
+
+    room.score = { T: 13, CT: 5 }; // T already at ROUNDS_TO_WIN
+    guts(room).afterRoundEnd();
+    step(room, 2); // flush the snapshot so the emitted event reaches the client
+
+    expect(room.phase).toBe('match_end');
+    const matchEndEvents = wsRec.msgs
+      .filter((m): m is Record<string, unknown> & SnapshotMsg => m.t === 's')
+      .flatMap((m) => m.ev ?? []);
+    expect(matchEndEvents).toContainEqual({ e: 'match_end', winner: 'T' });
+  });
+
+  it('emptying one team resets the match to warmup', () => {
+    const { room } = liveRoom();
+    const t = room.addPlayer(null, 'T1', 'T');
+    const ct = room.addPlayer(null, 'CT1', 'CT');
+    stepUntil(room, () => room.phase === 'live');
+
+    room.score = { T: 5, CT: 3 };
+    t.nades = ['smoke'];
+    room.removePlayer(ct.id);
+    step(room, 1); // the abandoned-match guard runs at the top of the next step()
+
+    expect(room.phase).toBe('waiting');
+    expect(room.score).toEqual({ T: 0, CT: 0 });
+    expect(t.nades).toEqual([]);
+    expect(t.alive).toBe(true);
+  });
+});
+
+describe('team balance', () => {
+  it('pickTeam assigns unrequested players to the smaller team, ties favoring T', () => {
+    const { room } = liveRoom();
+    room.addPlayer(null, 'A', 'T');
+    room.addPlayer(null, 'B', 'T');
+    const c = room.addPlayer(null, 'C'); // no requested team: T=2, CT=0 -> CT
+    expect(c.team).toBe('CT');
+
+    const d = room.addPlayer(null, 'D'); // T=2, CT=1 -> still CT
+    expect(d.team).toBe('CT');
+
+    const e = room.addPlayer(null, 'E'); // T=2, CT=2 -> tie goes to T
+    expect(e.team).toBe('T');
   });
 });
