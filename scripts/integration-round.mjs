@@ -19,7 +19,10 @@ const clients = [];
 function cleanup() {
   for (const c of clients) c.ws?.close();
   server?.kill();
-  setTimeout(() => process.exit(), 300);
+  setTimeout(() => {
+    server?.kill('SIGKILL'); // don't leave a lingering process holding the port
+    process.exit();
+  }, 300);
 }
 
 class TestClient {
@@ -82,10 +85,12 @@ class TestClient {
 
   /** semi-auto style pulse: press ATTACK briefly then release (one throw/shot per call) */
   async pulseAttack() {
+    // hold long enough that the 60 Hz input sender gets several packets out
+    // even when timers jitter under load — one press edge still means one shot
     this.buttons |= BTN.ATTACK;
-    await sleep(80);
+    await sleep(150);
     this.buttons &= ~BTN.ATTACK;
-    await sleep(80);
+    await sleep(100);
   }
 
   /** returns true when arrived */
@@ -122,17 +127,52 @@ async function waitFor(desc, cond, timeoutMs = 20000) {
   throw new Error(`timeout waiting for: ${desc}`);
 }
 
-const takeEvent = (c, type) => c.events.find((e) => e.e === type);
-const clearEvents = () => clients.forEach((c) => (c.events.length = 0));
+/** consume (remove and return) the first queued event of the given type */
+const takeEvent = (c, type) => {
+  const i = c.events.findIndex((e) => e.e === type);
+  return i === -1 ? undefined : c.events.splice(i, 1)[0];
+};
+
+/**
+ * Wait until `c` sees the current round's round_end on its own socket, then
+ * drop it and everything queued before it. Per-socket delivery is FIFO, so
+ * this discards exactly the finished round's leftovers — never events that
+ * belong to the next round. Each client must sync on its own stream: the two
+ * sockets can be tens of milliseconds apart under load, so a bulk clear keyed
+ * to the other client's state can wipe events that have not yet arrived here.
+ */
+const syncRoundEnd = (c, timeoutMs = 20000) =>
+  waitFor(`round_end seen by ${c.name}`, () => {
+    const i = c.events.findIndex((e) => e.e === 'round_end');
+    return i === -1 ? null : c.events.splice(0, i + 1)[i];
+  }, timeoutMs);
 
 async function main() {
-  server = spawn('npx', ['tsx', 'packages/server/src/index.ts'], {
+  // spawn tsx directly (not via npx): no wrapper cold-start, and kill()
+  // reaches the node process that actually holds the port
+  server = spawn('node_modules/.bin/tsx', ['packages/server/src/index.ts'], {
     env: { ...process.env, PORT: String(PORT), CS2D_FAST: '1' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  server.stdout.on('data', (d) => process.env.VERBOSE && process.stdout.write(`[srv] ${d}`));
-  server.stderr.on('data', (d) => process.stdout.write(`[srv-err] ${d}`));
-  await waitFor('server up', () => fetch(`http://localhost:${PORT}`).then(() => true).catch(() => false), 15000);
+  const srvTail = [];
+  const logSrv = (tag) => (d) => {
+    srvTail.push(String(d));
+    if (srvTail.length > 40) srvTail.shift();
+    if (tag === 'srv-err' || process.env.VERBOSE) process.stdout.write(`[${tag}] ${d}`);
+  };
+  server.stdout.on('data', logSrv('srv'));
+  server.stderr.on('data', logSrv('srv-err'));
+  let serverExit = null;
+  server.on('exit', (code, signal) => (serverExit = { code, signal }));
+  // cold tsx compile on a loaded machine can take well over 15s
+  await waitFor('server up', () => {
+    if (serverExit) {
+      throw new Error(
+        `server exited before ready (code ${serverExit.code}, signal ${serverExit.signal})\n${srvTail.join('')}`,
+      );
+    }
+    return fetch(`http://localhost:${PORT}`).then(() => true).catch(() => false);
+  }, 60000);
   await sleep(200);
 
   const createRes = await fetch(`http://localhost:${PORT}/rooms`, {
@@ -177,13 +217,12 @@ async function main() {
   clearInterval(killTimer);
   A.idle();
   ok('A killed B');
-  await waitFor('round end', () => takeEvent(A, 'round_end'));
-  const re1 = takeEvent(A, 'round_end');
+  const re1 = await syncRoundEnd(A);
   if (re1.winner !== 'T') return fail(`round 1 winner should be T, got ${re1.winner}`);
   ok(`round 1: T wins by ${re1.reason}`);
   await waitFor('scores update', () => A.match?.st === 1);
   ok(`score T ${A.match.st} - CT ${A.match.sct}`);
-  clearEvents();
+  await syncRoundEnd(B);
 
   // ── Round 2: A plants, B defuses ──
   await waitFor('round 2 live', () => A.match?.ph === 'live' && A.match?.rn === 2);
@@ -194,23 +233,21 @@ async function main() {
 
   const SITE = { x: 12 * 32, y: 6 * 32 };
   const plantLoop = setInterval(() => A.steerToward(SITE.x, SITE.y, true), 30);
-  await waitFor('planted', () => takeEvent(A, 'planted'), 25000);
+  const bombPos = await waitFor('planted', () => takeEvent(A, 'planted'), 25000);
   clearInterval(plantLoop);
   A.idle();
   ok('bomb planted');
-  if (A.match.ph !== 'planted' && !takeEvent(A, 'planted')) return fail('phase should be planted');
+  await waitFor('phase planted', () => A.match?.ph === 'planted', 5000);
 
-  const bombPos = takeEvent(A, 'planted');
   const defuseLoop = setInterval(() => B.steerToward(bombPos.x, bombPos.y, true), 30);
   await waitFor('defused', () => takeEvent(B, 'defused'), 25000);
   clearInterval(defuseLoop);
   B.idle();
   ok('bomb defused');
-  await waitFor('round 2 end', () => takeEvent(B, 'round_end'));
-  const re2 = takeEvent(B, 'round_end');
+  const re2 = await syncRoundEnd(B);
   if (re2.winner !== 'CT' || re2.reason !== 'bomb_defused') return fail(`round 2 expected CT/bomb_defused, got ${re2.winner}/${re2.reason}`);
   ok('round 2: CT wins by defuse');
-  clearEvents();
+  await syncRoundEnd(A);
 
   // ── Round 3: A plants, bomb explodes ──
   await waitFor('round 3 live', () => A.match?.ph === 'live' && A.match?.rn === 3);
@@ -224,13 +261,12 @@ async function main() {
   clearInterval(fleeLoop);
   A.idle();
   ok('bomb exploded');
-  await waitFor('round 3 end', () => takeEvent(A, 'round_end'));
-  const re3 = takeEvent(A, 'round_end');
+  const re3 = await syncRoundEnd(A);
   if (re3.winner !== 'T' || re3.reason !== 'bomb_exploded') return fail(`round 3 expected T/bomb_exploded, got ${re3.winner}/${re3.reason}`);
   ok('round 3: T wins by explosion');
   await waitFor('final score', () => A.match?.st === 2 && A.match?.sct === 1);
   ok(`final score T ${A.match.st} - CT ${A.match.sct}`);
-  clearEvents();
+  await syncRoundEnd(B);
 
   // ── Round 4: grenade economy + throwing (smoke/flash/he/molotov) ──
   await waitFor('round 4 live', () => A.match?.ph === 'live' && A.match?.rn === 4);
@@ -256,20 +292,17 @@ async function main() {
   A.aimAt(A.pos.x + 200, A.pos.y);
 
   await A.pulseAttack();
-  await waitFor('smoke thrown', () => takeEvent(A, 'nade_throw'));
-  const t1 = takeEvent(A, 'nade_throw');
+  const t1 = await waitFor('smoke thrown', () => takeEvent(A, 'nade_throw'));
   if (t1.kind !== 'smoke') return fail(`expected smoke thrown first (FIFO), got ${t1.kind}`);
   await waitFor('smoke_pop', () => takeEvent(A, 'smoke_pop'), 8000);
   await waitFor('smoke zone in snapshot', () => A.zones.some((z) => z[1] === 'smoke'), 3000);
   ok('smoke: thrown, detonated, zone visible');
-  clearEvents();
 
   // aim at the nearby west wall so the flash bounces to rest close to A —
   // keeps the self-blind check deterministic regardless of throw distance
   A.aimAt(A.pos.x - 300, A.pos.y);
   await A.pulseAttack();
-  await waitFor('flash thrown', () => takeEvent(A, 'nade_throw'));
-  const t2 = takeEvent(A, 'nade_throw');
+  const t2 = await waitFor('flash thrown', () => takeEvent(A, 'nade_throw'));
   if (t2.kind !== 'flash') return fail(`expected flash thrown second, got ${t2.kind}`);
   await waitFor('flash_pop', () => takeEvent(A, 'flash_pop'), 8000);
   ok('flash: thrown and detonated');
@@ -279,19 +312,15 @@ async function main() {
   } catch {
     console.log('  (note: self-blind not observed — LOS/distance-dependent, not a hard requirement)');
   }
-  clearEvents();
 
   await A.pulseAttack();
-  await waitFor('he thrown', () => takeEvent(A, 'nade_throw'));
-  const t3 = takeEvent(A, 'nade_throw');
+  const t3 = await waitFor('he thrown', () => takeEvent(A, 'nade_throw'));
   if (t3.kind !== 'he') return fail(`expected he thrown third, got ${t3.kind}`);
   await waitFor('he_pop', () => takeEvent(A, 'he_pop'), 8000);
   ok('HE: thrown and detonated');
-  clearEvents();
 
   await A.pulseAttack();
-  await waitFor('molotov thrown', () => takeEvent(A, 'nade_throw'));
-  const t4 = takeEvent(A, 'nade_throw');
+  const t4 = await waitFor('molotov thrown', () => takeEvent(A, 'nade_throw'));
   if (t4.kind !== 'molotov') return fail(`expected molotov thrown fourth, got ${t4.kind}`);
   await waitFor('molotov_ignite', () => takeEvent(A, 'molotov_ignite'), 8000);
   await waitFor('fire zone in snapshot', () => A.zones.some((z) => z[1] === 'fire'), 3000);
