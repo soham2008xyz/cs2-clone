@@ -26,9 +26,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build shared package
-        run: npm run build -w @cs2d/shared
-
       - name: Run tests
         run: npm test
 
