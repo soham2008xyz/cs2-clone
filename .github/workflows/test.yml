@@ -32,6 +32,9 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Run integration tests
+        run: npm run test:integration
+
       - name: Build server
         run: npm run build -w @cs2d/server
 

@@ -10,7 +10,8 @@
     "dev:server": "npm run dev -w @cs2d/server",
     "dev:client": "npm run dev -w @cs2d/client",
     "build": "npm run build -w @cs2d/client && npm run build -w @cs2d/server",
-    "test": "npm run test -w @cs2d/shared && npm run test -w @cs2d/server",
+    "test": "npm run test -w @cs2d/shared && npm run test -w @cs2d/server && npm run test -w @cs2d/client",
+    "test:integration": "node scripts/integration-round.mjs && node scripts/integration-bots.mjs",
     "start": "npm run start -w @cs2d/server"
   }
 }
