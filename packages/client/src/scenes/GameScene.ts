@@ -115,6 +115,8 @@ export class GameScene extends Phaser.Scene {
     this.darkness = this.add.graphics().setDepth(20);
     this.darkness.fillStyle(0x000000, 0.55);
     this.darkness.fillRect(0, 0, this.map.widthPx, this.map.heightPx);
+    // Phaser 4.x removed GeometryMask.setInvertAlpha — pinned to 3.90.x (package.json)
+    // until this inverse mask is ported; don't bump phaser without re-checking this line.
     const darkMask = this.visionGfx.createGeometryMask();
     darkMask.setInvertAlpha(true);
     this.darkness.setMask(darkMask);

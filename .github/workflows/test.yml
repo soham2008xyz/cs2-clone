@@ -32,6 +32,9 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Typecheck client
+        run: npm run typecheck -w @cs2d/client
+
       - name: Run integration tests
         run: npm run test:integration
 
