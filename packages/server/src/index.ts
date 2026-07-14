@@ -24,22 +24,35 @@ setInterval(() => manager.reap(), REAP_INTERVAL_MS);
 
 function readJsonBody(req: import('node:http').IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    let body = '';
-    req.on('data', (chunk) => {
-      body += chunk;
-      if (body.length > MAX_BODY_BYTES) {
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    let settled = false;
+    req.on('data', (chunk: Buffer) => {
+      if (settled) return;
+      bytes += chunk.length; // Buffer.length is bytes; body.length on a decoded string would be UTF-16 units
+      if (bytes > MAX_BODY_BYTES) {
+        settled = true;
         reject(new Error('body too large'));
         req.destroy();
+        return;
       }
+      chunks.push(chunk);
     });
     req.on('end', () => {
+      if (settled) return;
+      settled = true;
       try {
+        const body = Buffer.concat(chunks).toString('utf8');
         resolve(body ? JSON.parse(body) : {});
       } catch (e) {
         reject(e);
       }
     });
-    req.on('error', reject);
+    req.on('error', (e) => {
+      if (settled) return;
+      settled = true;
+      reject(e);
+    });
   });
 }
 
