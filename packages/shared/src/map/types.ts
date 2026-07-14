@@ -64,7 +64,8 @@ export interface CompiledMap {
   spawns: Record<TeamId, Vec2[]>;
   /** which bombsite (if any) covers a px position */
   siteAt(x: number, y: number): 'A' | 'B' | null;
-  siteCenters: Record<'A' | 'B', Vec2>;
+  /** null for a bombsite the map doesn't have (e.g. a single-site map) */
+  siteCenters: Record<'A' | 'B', Vec2 | null>;
   /** which team may buy at a px position (null = nobody; see MapDef.buyzones) */
   buyzoneAt(x: number, y: number): TeamId | null;
   /** utility anchors in world px (compiled from MapDef.utilitySpots) */
