@@ -44,8 +44,8 @@ export function compileMap(def: MapDef): CompiledMap {
   };
 
   const siteCenters = {
-    A: { x: siteAcc.A.x / Math.max(1, siteAcc.A.n), y: siteAcc.A.y / Math.max(1, siteAcc.A.n) },
-    B: { x: siteAcc.B.x / Math.max(1, siteAcc.B.n), y: siteAcc.B.y / Math.max(1, siteAcc.B.n) },
+    A: siteAcc.A.n > 0 ? { x: siteAcc.A.x / siteAcc.A.n, y: siteAcc.A.y / siteAcc.A.n } : null,
+    B: siteAcc.B.n > 0 ? { x: siteAcc.B.x / siteAcc.B.n, y: siteAcc.B.y / siteAcc.B.n } : null,
   };
 
   return {

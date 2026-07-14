@@ -30,15 +30,24 @@ export function falloff(weapon: WeaponDef, distance: number): number {
 
 /**
  * Armor absorption (CS-style): armored targets take damage*armorPen; armor
- * durability loses half of what it absorbed. Returns final hp damage and
- * armor remaining.
+ * durability loses half of what it absorbed. If armor runs out mid-hit, only
+ * the portion it could cover gets mitigated — the rest hits hp unmitigated
+ * (a shot doesn't get full-armor protection just because 1 point remains).
+ * Returns final hp damage and armor remaining.
  */
 export function applyArmor(damage: number, armor: number, armorPen: number): { hpDamage: number; armor: number } {
   if (armor <= 0) return { hpDamage: Math.round(damage), armor: 0 };
-  const hpDamage = damage * armorPen;
-  const absorbed = damage - hpDamage;
-  const newArmor = Math.max(0, Math.round(armor - absorbed / 2));
-  return { hpDamage: Math.round(hpDamage), armor: newArmor };
+  const absorbFrac = 1 - armorPen; // fraction of damage armor mitigates, per unit
+  const costPerUnit = absorbFrac / 2; // armor spent per unit of damage given the armored treatment
+  if (costPerUnit <= 0) return { hpDamage: Math.round(damage), armor }; // armorPen === 1: nothing to mitigate
+  const maxArmoredDamage = armor / costPerUnit; // damage armor can fully cover before depleting
+  if (damage <= maxArmoredDamage) {
+    const hpDamage = damage * armorPen;
+    const newArmor = Math.max(0, Math.round(armor - (damage * absorbFrac) / 2));
+    return { hpDamage: Math.round(hpDamage), armor: newArmor };
+  }
+  const hpDamage = maxArmoredDamage * armorPen + (damage - maxArmoredDamage);
+  return { hpDamage: Math.round(hpDamage), armor: 0 };
 }
 
 /**

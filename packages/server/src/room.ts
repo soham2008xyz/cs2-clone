@@ -251,7 +251,7 @@ export class Room {
   // ── players ───────────────────────────────────────────────────────────────
 
   private pickTeam(requested?: TeamId): TeamId {
-    if (requested) return requested;
+    if (requested === 'T' || requested === 'CT') return requested;
     let t = 0;
     let ct = 0;
     for (const p of this.players.values()) p.team === 'T' ? t++ : ct++;
@@ -329,6 +329,7 @@ export class Room {
 
   /** Pre-match team switch only — avoids mid-round economy/loadout weirdness. */
   setTeam(id: number, team: TeamId): void {
+    if (team !== 'T' && team !== 'CT') return;
     const p = this.players.get(id);
     if (!p || p.team === team || this.phase !== 'waiting') return;
     p.team = team;
@@ -407,6 +408,12 @@ export class Room {
     if (this.phase === 'freeze') return this.inBuyzone(p);
     if (this.phase === 'live' && this.tick < this.liveStartTick + sec(BUY_WINDOW)) return this.inBuyzone(p);
     return false;
+  }
+
+  /** Public read surface for bot AI: whether `id` may buy right now (alive, in a buyzone, within the buy window). */
+  canBuy(id: number): boolean {
+    const p = this.players.get(id);
+    return !!p && this.buyingAllowed(p);
   }
 
   private inBuyzone(p: PlayerConn): boolean {
@@ -749,6 +756,7 @@ export class Room {
     this.activeNades.clear();
     this.smokes.clear();
     this.fires.clear();
+    this.fireVersion++; // bots must repath now that fires were cleared out from under them
     const byTeam: Record<TeamId, number> = { T: 0, CT: 0 };
     for (const p of this.players.values()) {
       p.alive = true;
@@ -1046,6 +1054,11 @@ export class Room {
         p.hp = MAX_HP;
         p.bloom = 0;
         p.respawnTick = 0;
+        p.blindUntilTick = 0;
+        p.armor = 0;
+        p.reloadEndTick = 0;
+        p.actionStartTick = 0;
+        p.nextShotTick = 0;
         p.pos = this.spawnPos(p.team, Math.floor(this.rng() * 10));
         p.primary = null; // warmup respawn = fresh pistol loadout
         this.givePistolLoadout(p);
@@ -1061,6 +1074,7 @@ export class Room {
       for (const input of queue) {
         p.lastSeq = input.s;
         if (input.k !== undefined) p.lastSeenTick = input.k;
+        if (!Number.isFinite(input.a)) input.a = p.aim; // reject NaN/Infinity aim (would poison grenade velocity / shot tracing)
         p.aim = input.a;
         if (p.alive) {
           if (input.w) this.switchSlot(p, input.w);

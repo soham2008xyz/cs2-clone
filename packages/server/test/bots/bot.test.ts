@@ -6,8 +6,13 @@
 // stop being cheap to keep green, cut this file and rely on
 // scripts/integration-bots.mjs for bot coverage instead.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MapBuilder, registerMap } from '@cs2d/shared';
+import { dist, MapBuilder, registerMap, TILE_SIZE, type Vec2 } from '@cs2d/shared';
 import { Room } from '../../src/room.js';
+
+interface BombInternals {
+  bomb: { mode: string; pos: Vec2; carrierId: number; explodeTick: number };
+}
+const bombGuts = (r: Room): BombInternals => r as unknown as BombInternals;
 
 const FAST = { freeze: 0.05, round: 20, bomb: 1, plant: 0.1, defuse: 0.2, defuseKit: 0.1, roundEnd: 0.1 };
 
@@ -72,6 +77,19 @@ describe('BotController (structural smoke tests)', () => {
     expect(bot.pos.x !== start.x || bot.pos.y !== start.y).toBe(true);
   });
 
+  it('never assigns a bot to a bombsite the map does not have (single-site maps)', () => {
+    const mapName = botTestMap(); // only defines site A
+    vi.spyOn(Math, 'random').mockReturnValue(0.9); // >= 0.5: would pick the non-existent 'B' if unguarded
+    const room = new Room(mapName, FAST);
+    const bot = room.addBot('T', 'normal');
+    room.addPlayer(null, 'Human', 'CT'); // far away: won't distract the bot into combat
+    stepUntil(room, () => room.phase === 'live');
+
+    const start = { ...bot.pos };
+    step(room, 90); // 1.5s: should path toward the one real site, not idle at spawn forever
+    expect(bot.pos.x !== start.x || bot.pos.y !== start.y).toBe(true);
+  });
+
   it('damages a nearby, visible enemy within a reasonable tick budget', () => {
     const room = new Room('testarena', FAST);
     const bot = room.addBot('T', 'hard'); // hard: shortest reaction delay
@@ -87,5 +105,21 @@ describe('BotController (structural smoke tests)', () => {
       if (human.hp < 100) hit = true;
     }
     expect(hit).toBe(true);
+  });
+
+  it('a T bot without the bomb heads toward a dropped bomb instead of its assigned site', () => {
+    const mapName = botTestMap();
+    const room = new Room(mapName, FAST);
+    const bot = room.addBot('T', 'normal'); // assignedSite forced to 'A' (near T spawn) by the Math.random mock
+    room.addPlayer(null, 'Human', 'CT'); // far away: outside VISION_RANGE, won't distract the bot
+    stepUntil(room, () => room.phase === 'live');
+
+    // drop the bomb near the CT side — the opposite direction from site A
+    const dropPos: Vec2 = { x: 35 * TILE_SIZE, y: 4 * TILE_SIZE };
+    bombGuts(room).bomb = { mode: 'dropped', pos: dropPos, carrierId: 0, explodeTick: 0 };
+
+    const startDist = dist(bot.pos, dropPos);
+    step(room, 90); // 1.5s: plenty of time to start walking toward the bomb
+    expect(dist(bot.pos, dropPos)).toBeLessThan(startDist);
   });
 });

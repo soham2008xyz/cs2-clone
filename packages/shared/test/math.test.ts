@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { raycastGrid, rayCircle } from '../src/math.js';
+import { lerpAngle, norm, raycastGrid, rayCircle } from '../src/math.js';
 
 describe('raycastGrid', () => {
   it('returns 0 when the ray starts inside a solid tile', () => {
@@ -34,5 +34,30 @@ describe('rayCircle', () => {
   it('returns 0 when the origin is already inside the circle', () => {
     const t = rayCircle({ x: 100, y: 0 }, { x: 1, y: 0 }, { x: 100, y: 0 }, 10);
     expect(t).toBe(0);
+  });
+});
+
+describe('lerpAngle', () => {
+  it('wraps the long way forward into the short way backward (d > pi branch)', () => {
+    // 0 -> 270deg the "long way" is +270deg; the shortest path is -90deg
+    expect(lerpAngle(0, Math.PI * 1.5, 1)).toBeCloseTo(-Math.PI / 2, 5);
+    expect(lerpAngle(0, Math.PI * 1.5, 0.5)).toBeCloseTo(-Math.PI / 4, 5);
+  });
+
+  it('wraps the long way backward into the short way forward (d < -pi branch)', () => {
+    // 270deg -> 0 the "long way" is -270deg; the shortest path is +90deg (past 2*pi)
+    expect(lerpAngle(Math.PI * 1.5, 0, 1)).toBeCloseTo(Math.PI * 2, 5);
+  });
+});
+
+describe('norm', () => {
+  it('returns the zero vector for a zero-length input instead of NaN', () => {
+    expect(norm({ x: 0, y: 0 })).toEqual({ x: 0, y: 0 });
+  });
+
+  it('normalizes a non-zero vector to unit length', () => {
+    const n = norm({ x: 3, y: 4 });
+    expect(n.x).toBeCloseTo(0.6, 5);
+    expect(n.y).toBeCloseTo(0.8, 5);
   });
 });

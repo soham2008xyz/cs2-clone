@@ -45,8 +45,15 @@ const THROW_BAND_MAX = 450;
 const THROW_COOLDOWN_TICKS = 3 * TICK_RATE;
 const MAX_THROWS_PER_ROUND = 2;
 
-const nearestSite = (map: CompiledMap, pos: Vec2): 'A' | 'B' =>
-  dist(pos, map.siteCenters.A) <= dist(pos, map.siteCenters.B) ? 'A' : 'B';
+const nearestSite = (map: CompiledMap, pos: Vec2): 'A' | 'B' => {
+  const { A, B } = map.siteCenters;
+  if (!B) return 'A';
+  if (!A) return 'B';
+  return dist(pos, A) <= dist(pos, B) ? 'A' : 'B';
+};
+
+/** Site center with a same-map fallback — defends computeGoal against a null goal even if a caller ever passes a stale/invalid site. */
+const siteGoal = (map: CompiledMap, site: 'A' | 'B'): Vec2 | null => map.siteCenters[site] ?? map.siteCenters[site === 'A' ? 'B' : 'A'];
 
 /** Solidity widened by active fire patches (goal tile stays reachable). */
 function fireBlocked(map: CompiledMap, zones: Array<{ pos: Vec2; radius: number }>, goal: Vec2): BlockedFn | undefined {
@@ -78,6 +85,7 @@ export class BotController {
   private lastPos: Vec2 = { x: 0, y: 0 };
   private lastStuckCheckTick = 0;
   private assignedSite: 'A' | 'B' = 'A';
+  private setupRound = -1;
   private boughtRound = -1;
   private targetId: number | null = null;
   private targetSeenTick = 0;
@@ -99,11 +107,18 @@ export class BotController {
     const p = room.players.get(this.playerId);
     if (!p) return;
 
-    if (room.roundNumber !== this.boughtRound && (room.phase === 'freeze' || room.phase === 'live')) {
-      this.boughtRound = room.roundNumber;
-      this.assignedSite = Math.random() < 0.5 ? 'A' : 'B';
+    if (room.roundNumber !== this.setupRound && (room.phase === 'freeze' || room.phase === 'live')) {
+      this.setupRound = room.roundNumber;
+      const { A, B } = room.map.siteCenters;
+      this.assignedSite = A && B ? (Math.random() < 0.5 ? 'A' : 'B') : A ? 'A' : 'B'; // NOSONAR - non-cryptographic: coin-flip which site the bot pushes, not a security-sensitive use
       this.throwsThisRound = 0;
       this.lastThrowTick = -Infinity;
+    }
+    // separate from setup: a backfill bot can join after its buy window has already
+    // closed, so don't latch boughtRound until a buy attempt was actually possible —
+    // otherwise it plays the whole round pistol-only and never retries.
+    if (room.roundNumber !== this.boughtRound && room.canBuy(this.playerId)) {
+      this.boughtRound = room.roundNumber;
       for (const item of decideBotBuys(p.money, p.team, p.hasKit)) room.handleBuy(this.playerId, item);
     }
 
@@ -207,13 +222,14 @@ export class BotController {
     const map = room.map;
     if (room.phase === 'planted') {
       // post-plant: CTs converge on the bomb, Ts hold their site
-      return p.team === 'CT' ? room.bombInfo.pos : map.siteCenters[this.assignedSite];
+      return p.team === 'CT' ? room.bombInfo.pos : siteGoal(map, this.assignedSite);
     }
     if (p.hp < SAVE_HP && !p.hasBomb) return map.spawns[p.team][0]; // save the gun
+    if (p.team === 'T' && !p.hasBomb && room.bombInfo.mode === 'dropped') return room.bombInfo.pos; // retrieve it — don't strand the objective
     if (p.team === 'CT' && room.botIntel && tick - room.botIntel.tick < INTEL_TTL_TICKS) {
-      return map.siteCenters[room.botIntel.site]; // rotate on a teammate's sighting
+      return siteGoal(map, room.botIntel.site); // rotate on a teammate's sighting
     }
-    return map.siteCenters[this.assignedSite];
+    return siteGoal(map, this.assignedSite);
   }
 
   private findVisibleEnemy(room: Room, p: PlayerConn): PlayerConn | null {

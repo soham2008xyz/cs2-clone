@@ -28,6 +28,7 @@ export function renderMap(scene: Phaser.Scene, map: CompiledMap): void {
 
   for (const site of ['A', 'B'] as const) {
     const c = map.siteCenters[site];
+    if (!c) continue; // map has no such site (e.g. a single-site map)
     scene.add
       .text(c.x, c.y, site, { fontFamily: 'Arial Black', fontSize: '48px', color: '#7a2e1d' })
       .setOrigin(0.5)

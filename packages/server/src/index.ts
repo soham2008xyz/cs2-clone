@@ -13,22 +13,46 @@ const PORT = Number(process.env.PORT ?? 8090);
 const FAST_TIMINGS = process.env.CS2D_FAST === '1' ? { freeze: 1, round: 20, bomb: 4, plant: 0.5, defuse: 1, defuseKit: 0.5, roundEnd: 1 } : {};
 const REAP_INTERVAL_MS = 30000;
 const BOT_DIFFICULTIES: BotDifficulty[] = ['easy', 'normal', 'hard'];
+const MAX_BODY_BYTES = 16 * 1024; // POST /rooms bodies are tiny; reject anything larger
+
+function validDifficulty(d: unknown): BotDifficulty {
+  return BOT_DIFFICULTIES.includes(d as BotDifficulty) ? (d as BotDifficulty) : 'normal';
+}
 
 const manager = new RoomManager();
 setInterval(() => manager.reap(), REAP_INTERVAL_MS);
 
 function readJsonBody(req: import('node:http').IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    let body = '';
-    req.on('data', (chunk) => (body += chunk));
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    let settled = false;
+    req.on('data', (chunk: Buffer) => {
+      if (settled) return;
+      bytes += chunk.length; // Buffer.length is bytes; body.length on a decoded string would be UTF-16 units
+      if (bytes > MAX_BODY_BYTES) {
+        settled = true;
+        reject(new Error('body too large'));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
     req.on('end', () => {
+      if (settled) return;
+      settled = true;
       try {
+        const body = Buffer.concat(chunks).toString('utf8');
         resolve(body ? JSON.parse(body) : {});
       } catch (e) {
         reject(e);
       }
     });
-    req.on('error', reject);
+    req.on('error', (e) => {
+      if (settled) return;
+      settled = true;
+      reject(e);
+    });
   });
 }
 
@@ -81,7 +105,7 @@ const http = createServer(async (req, res) => {
     try {
       const body = (await readJsonBody(req)) as { map?: string; backfillBots?: boolean; botDifficulty?: string };
       const map = listMaps().includes(body.map ?? '') ? (body.map as string) : 'dust2';
-      const botDifficulty = BOT_DIFFICULTIES.includes(body.botDifficulty as BotDifficulty) ? (body.botDifficulty as BotDifficulty) : 'normal';
+      const botDifficulty = validDifficulty(body.botDifficulty);
       const meta = manager.create(map, Boolean(body.backfillBots), FAST_TIMINGS, botDifficulty);
       res.writeHead(200, { 'content-type': 'application/json', ...cors });
       res.end(JSON.stringify({ code: meta.code, map: meta.map }));
@@ -128,10 +152,12 @@ wss.on('connection', (ws: WebSocket, req) => {
     } else if (msg.t === 'buy') {
       room.handleBuy(playerId, msg.item);
     } else if (msg.t === 'bots') {
-      room.fillBots(Math.min(5, Math.max(1, msg.perTeam ?? 5)), msg.difficulty ?? 'normal');
+      if (room.phase === 'waiting') {
+        room.fillBots(Math.min(5, Math.max(1, msg.perTeam ?? 5)), validDifficulty(msg.difficulty));
+      }
     } else if (msg.t === 'team') {
       room.setTeam(playerId, msg.team);
-      playerTeam = msg.team;
+      playerTeam = room.players.get(playerId)?.team ?? playerTeam; // setTeam may reject (wrong phase/team) — trust the room, not the wire
     } else if (msg.t === 'chat') {
       const name = room.players.get(playerId)?.name ?? 'Player';
       room.broadcastChat(name, playerTeam, msg.text);
