@@ -110,7 +110,7 @@ export class BotController {
     if (room.roundNumber !== this.setupRound && (room.phase === 'freeze' || room.phase === 'live')) {
       this.setupRound = room.roundNumber;
       const { A, B } = room.map.siteCenters;
-      this.assignedSite = A && B ? (Math.random() < 0.5 ? 'A' : 'B') : A ? 'A' : 'B'; // single-site maps only have one to pick
+      this.assignedSite = A && B ? (Math.random() < 0.5 ? 'A' : 'B') : A ? 'A' : 'B'; // NOSONAR - non-cryptographic: coin-flip which site the bot pushes, not a security-sensitive use
       this.throwsThisRound = 0;
       this.lastThrowTick = -Infinity;
     }
