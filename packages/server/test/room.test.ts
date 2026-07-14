@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { WebSocket } from 'ws';
-import { BTN, MOLOTOV_DPS, OT_MONEY, PICKUP_RADIUS, TICK_DT, type GameEvent, type SnapshotMsg, type TeamId } from '@cs2d/shared';
+import { BTN, BUY_WINDOW, MOLOTOV_DPS, OT_MONEY, PICKUP_RADIUS, TICK_DT, TICK_RATE, type GameEvent, type SnapshotMsg, type TeamId } from '@cs2d/shared';
 import { Room, type PlayerConn } from '../src/room.js';
 
 // Fast timings (seconds); sec() rounds to ticks: freeze=3, plant=6, defuse=12, roundEnd=6, bomb=60.
@@ -97,6 +97,50 @@ describe('round flow', () => {
 
     stepUntil(room, () => room.phase === 'round_end');
     expect(room.score.T).toBe(1); // detonation = T win
+  });
+
+  it('bomb explosion damages a nearby survivor through armor and ends the round as bomb_exploded', () => {
+    const { room, send } = liveRoom();
+    const wsRec = fakeWs();
+    const t = room.addPlayer(null, 'T1', 'T');
+    const ct = room.addPlayer(wsRec.ws, 'CT1', 'CT');
+    stepUntil(room, () => room.phase === 'live');
+
+    plantBomb(room, send, t);
+    t.hp = 0;
+    t.alive = false; // no T left; CT alone can only defuse or ride out the blast
+
+    ct.pos = { ...guts(room).bomb.pos }; // stand right on top of the bomb
+    ct.armor = 100;
+
+    stepUntil(room, () => room.phase === 'round_end');
+    step(room, 2); // flush the snapshot so the emitted events reach the client
+
+    expect(room.score.T).toBe(1);
+    const events = wsRec.msgs.filter((m): m is Record<string, unknown> & SnapshotMsg => m.t === 's').flatMap((m) => m.ev ?? []);
+    expect(events).toContainEqual(expect.objectContaining({ e: 'round_end', winner: 'T', reason: 'bomb_exploded' }));
+    expect(events.some((ev) => ev.e === 'exploded')).toBe(true);
+    expect(events).toContainEqual({ e: 'kill', k: 0, v: ct.id, w: 'c4' });
+    expect(ct.alive).toBe(false); // full-radius blast at zero distance kills
+    expect(ct.armor).toBeLessThan(100); // BOMB_ARMOR_PEN mitigated part of it, not all
+  });
+
+  it('CT wiped out during planted resolves as elimination_t, without waiting for the bomb timer', () => {
+    const { room, send } = liveRoom();
+    const wsRec = fakeWs();
+    const t = room.addPlayer(wsRec.ws, 'T1', 'T');
+    const ct = room.addPlayer(null, 'CT1', 'CT');
+    stepUntil(room, () => room.phase === 'live');
+
+    plantBomb(room, send, t);
+    ct.hp = 0;
+    ct.alive = false;
+    stepUntil(room, () => room.phase === 'round_end', 10); // resolves fast — well before the bomb timer
+    step(room, 2); // flush the snapshot so the emitted events reach the client
+
+    expect(room.score.T).toBe(1);
+    const events = wsRec.msgs.filter((m): m is Record<string, unknown> & SnapshotMsg => m.t === 's').flatMap((m) => m.ev ?? []);
+    expect(events).toContainEqual(expect.objectContaining({ e: 'round_end', winner: 'T', reason: 'elimination_t' }));
   });
 
   it('defuse ends the round for CT and clears the bomb', () => {
@@ -574,6 +618,47 @@ describe('match arc', () => {
     expect(t.nades).toEqual([]);
     expect(t.alive).toBe(true);
   });
+
+  it('resetToWarmup bumps fireVersion so bots repath around cleared fires', () => {
+    const { room } = liveRoom();
+    const t = room.addPlayer(null, 'T1', 'T');
+    const ct = room.addPlayer(null, 'CT1', 'CT');
+    stepUntil(room, () => room.phase === 'live');
+
+    guts(room).fires.set(1, { id: 1, kind: 'fire', pos: { x: 0, y: 0 }, untilTick: room.tick + 1000, ownerId: t.id, ownerTeam: 'T' });
+    const versionBefore = room.fireInfo.version;
+
+    room.removePlayer(ct.id);
+    step(room, 1); // the abandoned-match guard runs at the top of the next step()
+
+    expect(room.phase).toBe('waiting');
+    expect(room.fireInfo.zones).toEqual([]);
+    expect(room.fireInfo.version).toBeGreaterThan(versionBefore);
+  });
+});
+
+describe('warmup respawn', () => {
+  it('resets per-life fields (blind/armor/reload/action/fire-cooldown), not just hp/pos/loadout', () => {
+    const { room } = liveRoom();
+    const p = room.addPlayer(null, 'T1', 'T'); // no CT joins -> room stays in warmup ('waiting')
+    expect(room.phase).toBe('waiting');
+
+    p.alive = false;
+    p.blindUntilTick = 99999;
+    p.armor = 50;
+    p.reloadEndTick = 99999;
+    p.actionStartTick = 99999;
+    p.nextShotTick = 99999;
+    p.respawnTick = room.tick + 1;
+
+    stepUntil(room, () => p.alive === true);
+
+    expect(p.blindUntilTick).toBe(0);
+    expect(p.armor).toBe(0);
+    expect(p.reloadEndTick).toBe(0);
+    expect(p.actionStartTick).toBe(0);
+    expect(p.nextShotTick).toBe(0);
+  });
 });
 
 describe('team balance', () => {
@@ -589,5 +674,61 @@ describe('team balance', () => {
 
     const e = room.addPlayer(null, 'E'); // T=2, CT=2 -> tie goes to T
     expect(e.team).toBe('T');
+  });
+
+  it('addPlayer ignores an invalid requested team and falls back to balance instead of crashing', () => {
+    const { room } = liveRoom();
+    room.addPlayer(null, 'A', 'T');
+    const bogus = room.addPlayer(null, 'B', 'X' as TeamId);
+    expect(bogus.team).toBe('CT');
+  });
+
+  it('setTeam ignores an invalid team, leaving the player unchanged', () => {
+    const { room } = liveRoom();
+    const p = room.addPlayer(null, 'A', 'T');
+    room.setTeam(p.id, 'X' as TeamId);
+    expect(p.team).toBe('T');
+  });
+});
+
+describe('input handling', () => {
+  it('rejects non-finite aim, keeping the last known-good value', () => {
+    const { room, send } = liveRoom();
+    const t = room.addPlayer(null, 'T1', 'T');
+    room.addPlayer(null, 'CT1', 'CT');
+
+    send(t.id, 0, { a: 1.25 });
+    step(room);
+    expect(t.aim).toBeCloseTo(1.25);
+
+    send(t.id, 0, { a: NaN });
+    step(room);
+    expect(Number.isFinite(t.aim)).toBe(true);
+    expect(t.aim).toBeCloseTo(1.25);
+
+    send(t.id, 0, { a: Infinity });
+    step(room);
+    expect(Number.isFinite(t.aim)).toBe(true);
+    expect(t.aim).toBeCloseTo(1.25);
+  });
+});
+
+describe('buy window', () => {
+  it('canBuy is true during freeze and early live, false once BUY_WINDOW elapses', () => {
+    // round must outlast BUY_WINDOW (20s = 1200 ticks) so 'live' persists past it
+    const LONG_ROUND = { freeze: 0.05, round: 25, bomb: 1, plant: 0.1, defuse: 0.2, defuseKit: 0.1, roundEnd: 0.1 };
+    const room = new Room('testarena', LONG_ROUND);
+    const t = room.addPlayer(null, 'T1', 'T');
+    room.addPlayer(null, 'CT1', 'CT');
+
+    stepUntil(room, () => room.phase === 'freeze');
+    expect(room.canBuy(t.id)).toBe(true);
+
+    stepUntil(room, () => room.phase === 'live');
+    expect(room.canBuy(t.id)).toBe(true); // just past freeze, still within the buy window
+
+    step(room, Math.round(BUY_WINDOW * TICK_RATE) + 60); // past the window, round (1500 ticks) still running
+    expect(room.phase).toBe('live');
+    expect(room.canBuy(t.id)).toBe(false);
   });
 });
