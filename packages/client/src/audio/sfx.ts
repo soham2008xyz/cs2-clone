@@ -92,5 +92,5 @@ export function sfx(name: CueName, at?: Vec2, listener?: Vec2): void {
     gain = Math.pow(1 - d / HEARING_RANGE, 1.4);
     pan = Math.max(-1, Math.min(1, dx / PAN_RANGE));
   }
-  for (const layer of CUES[name] as Layer[]) play(layer.p, pan, gain, layer.at ?? 0);
+  for (const layer of CUES[name]) play(layer.p, pan, gain, 'at' in layer ? layer.at : 0);
 }
