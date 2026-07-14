@@ -37,6 +37,16 @@ describe('damage math', () => {
   it('no armor takes full damage', () => {
     expect(applyArmor(36, 0, 0.775)).toEqual({ hpDamage: 36, armor: 0 });
   });
+
+  it('near-depleted armor only mitigates the portion it can cover, not the whole shot', () => {
+    // 1 armor can't fully absorb a 36-damage rifle hit (0.775 pen) — the fix carries
+    // the depletion over: armor covers a sliver, the rest hits hp unmitigated. Before
+    // the fix this returned hpDamage: 28 (full mitigation) — as if armor were plentiful.
+    const r = applyArmor(36, 1, 0.775);
+    expect(r.armor).toBe(0);
+    expect(r.hpDamage).toBeGreaterThan(28);
+    expect(r.hpDamage).toBeLessThanOrEqual(36);
+  });
 });
 
 describe('traceShot', () => {

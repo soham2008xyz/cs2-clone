@@ -73,8 +73,8 @@ describe('dust2', () => {
 
     const mustReach: Array<[string, number, number]> = [
       ['CT spawn', map.spawns.CT[0].x, map.spawns.CT[0].y],
-      ['A site', map.siteCenters.A.x, map.siteCenters.A.y],
-      ['B site', map.siteCenters.B.x, map.siteCenters.B.y],
+      ['A site', map.siteCenters.A!.x, map.siteCenters.A!.y],
+      ['B site', map.siteCenters.B!.x, map.siteCenters.B!.y],
     ];
     for (const c of map.def.callouts) {
       mustReach.push([c.name, (c.tx + 0.5) * TILE_SIZE, (c.ty + 0.5) * TILE_SIZE]);
@@ -98,8 +98,8 @@ describe('dust2', () => {
   });
 
   it('bomb sites report correctly via siteAt', () => {
-    expect(map.siteAt(map.siteCenters.A.x, map.siteCenters.A.y)).toBe('A');
-    expect(map.siteAt(map.siteCenters.B.x, map.siteCenters.B.y)).toBe('B');
+    expect(map.siteAt(map.siteCenters.A!.x, map.siteCenters.A!.y)).toBe('A');
+    expect(map.siteAt(map.siteCenters.B!.x, map.siteCenters.B!.y)).toBe('B');
     expect(map.siteAt(map.spawns.T[0].x, map.spawns.T[0].y)).toBeNull();
   });
 });
@@ -121,7 +121,11 @@ describe('testarena', () => {
   it('site A is reachable from T spawn', () => {
     const tSpawn = map.spawns.T[0];
     const reach = flood(map, tSpawn.x, tSpawn.y);
-    expect(map.isSolidAt(map.siteCenters.A.x, map.siteCenters.A.y)).toBe(false);
-    expect(reach.has(tileIndexAt(map, map.siteCenters.A.x, map.siteCenters.A.y))).toBe(true);
+    expect(map.isSolidAt(map.siteCenters.A!.x, map.siteCenters.A!.y)).toBe(false);
+    expect(reach.has(tileIndexAt(map, map.siteCenters.A!.x, map.siteCenters.A!.y))).toBe(true);
+  });
+
+  it('has no site B (single-site map) — siteCenters.B is null, not a bogus (0,0)', () => {
+    expect(map.siteCenters.B).toBeNull();
   });
 });
