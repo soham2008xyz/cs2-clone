@@ -77,6 +77,19 @@ describe('BotController (structural smoke tests)', () => {
     expect(bot.pos.x !== start.x || bot.pos.y !== start.y).toBe(true);
   });
 
+  it('never assigns a bot to a bombsite the map does not have (single-site maps)', () => {
+    const mapName = botTestMap(); // only defines site A
+    vi.spyOn(Math, 'random').mockReturnValue(0.9); // >= 0.5: would pick the non-existent 'B' if unguarded
+    const room = new Room(mapName, FAST);
+    const bot = room.addBot('T', 'normal');
+    room.addPlayer(null, 'Human', 'CT'); // far away: won't distract the bot into combat
+    stepUntil(room, () => room.phase === 'live');
+
+    const start = { ...bot.pos };
+    step(room, 90); // 1.5s: should path toward the one real site, not idle at spawn forever
+    expect(bot.pos.x !== start.x || bot.pos.y !== start.y).toBe(true);
+  });
+
   it('damages a nearby, visible enemy within a reasonable tick budget', () => {
     const room = new Room('testarena', FAST);
     const bot = room.addBot('T', 'hard'); // hard: shortest reaction delay
