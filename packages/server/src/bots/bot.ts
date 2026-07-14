@@ -52,6 +52,9 @@ const nearestSite = (map: CompiledMap, pos: Vec2): 'A' | 'B' => {
   return dist(pos, A) <= dist(pos, B) ? 'A' : 'B';
 };
 
+/** Site center with a same-map fallback — defends computeGoal against a null goal even if a caller ever passes a stale/invalid site. */
+const siteGoal = (map: CompiledMap, site: 'A' | 'B'): Vec2 | null => map.siteCenters[site] ?? map.siteCenters[site === 'A' ? 'B' : 'A'];
+
 /** Solidity widened by active fire patches (goal tile stays reachable). */
 function fireBlocked(map: CompiledMap, zones: Array<{ pos: Vec2; radius: number }>, goal: Vec2): BlockedFn | undefined {
   if (zones.length === 0) return undefined;
@@ -219,14 +222,14 @@ export class BotController {
     const map = room.map;
     if (room.phase === 'planted') {
       // post-plant: CTs converge on the bomb, Ts hold their site
-      return p.team === 'CT' ? room.bombInfo.pos : map.siteCenters[this.assignedSite];
+      return p.team === 'CT' ? room.bombInfo.pos : siteGoal(map, this.assignedSite);
     }
     if (p.hp < SAVE_HP && !p.hasBomb) return map.spawns[p.team][0]; // save the gun
     if (p.team === 'T' && !p.hasBomb && room.bombInfo.mode === 'dropped') return room.bombInfo.pos; // retrieve it — don't strand the objective
     if (p.team === 'CT' && room.botIntel && tick - room.botIntel.tick < INTEL_TTL_TICKS) {
-      return map.siteCenters[room.botIntel.site]; // rotate on a teammate's sighting
+      return siteGoal(map, room.botIntel.site); // rotate on a teammate's sighting
     }
-    return map.siteCenters[this.assignedSite];
+    return siteGoal(map, this.assignedSite);
   }
 
   private findVisibleEnemy(room: Room, p: PlayerConn): PlayerConn | null {
