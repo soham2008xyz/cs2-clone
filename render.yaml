@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: cs2d
+    runtime: node
+    plan: free
+    branch: main
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /rooms
+    autoDeploy: true

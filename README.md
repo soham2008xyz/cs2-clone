@@ -26,6 +26,19 @@ npm start       # serves the built client AND the game API/ws on :8090
 Then open <http://localhost:8090> — no Vite needed; one Node process runs
 the whole game.
 
+## Deployment
+
+Deployed on [Render](https://render.com)'s free Web Service tier, configured
+via `render.yaml` at the repo root — Render builds and runs the same
+single-server production mode described above, so the one process serves
+the client and the game/ws API from one URL. Pushing to `main` auto-deploys.
+
+Free-tier caveat: the service sleeps after 15 minutes with no inbound
+traffic, so the *first* request after a long idle period can take up to
+about a minute to wake up. Once a room has active players, ongoing
+WebSocket traffic keeps it awake — the slow case is specifically the
+first connection after idle, not mid-game.
+
 ## Controls
 
 | Key | Action |
