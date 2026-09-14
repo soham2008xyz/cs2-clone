@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@cs2d/shared": "*",
-    "phaser": "~3.90.0"
+    "phaser": "~4.2.1"
   },
   "devDependencies": {
     "jsdom": "^29.1.1",
