@@ -201,6 +201,19 @@ describe('GameScene.update — entities and camera', () => {
     expect(g.enemyLayer.calls.filter((c) => c.method === 'add')).toHaveLength(2);
   });
 
+  it('hides a remote entity once it drops out of the snapshot instead of freezing it', () => {
+    sampled.set(3, remote(300, 400));
+    g.update(0, 0);
+    expect(g.entities.get(3)?.sprite).toMatchObject({ x: 300, y: 400, visible: true });
+    sampled.delete(3); // server stopped sending the enemy: no longer in sight
+    g.update(0, 0);
+    expect(g.entities.get(3)?.sprite.visible).toBe(false);
+    expect(g.entities.get(3)?.label.visible).toBe(false);
+    sampled.set(3, remote(310, 410)); // back in sight
+    g.update(0, 0);
+    expect(g.entities.get(3)?.sprite).toMatchObject({ x: 310, y: 410, visible: true });
+  });
+
   it('skips sampled players missing from the roster', () => {
     sampled.set(99, remote(1, 1));
     g.update(0, 0);

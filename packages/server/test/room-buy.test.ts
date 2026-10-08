@@ -10,8 +10,15 @@ const FAST = { freeze: 0.05, round: 5, bomb: 1, plant: 0.1, defuse: 0.2, defuseK
 const LONG_LIVE = { ...FAST, round: 30 };
 
 /** Private internals the tests poke at (TS `private` is compile-time only). */
+interface GroundItem {
+  weaponId: string;
+  ammo: number;
+  reserve: number;
+  blockedFor: number;
+}
 interface RoomInternals {
   step(): void;
+  groundItems: Map<number, GroundItem>;
 }
 
 const guts = (r: Room): RoomInternals => r as unknown as RoomInternals;
@@ -182,6 +189,68 @@ describe('handleBuy: weapons', () => {
     expect(t.money).toBe(3000 - 2700);
     expect(t.activeSlot).toBe(1);
     expect(t.reloadEndTick).toBe(0);
+  });
+});
+
+describe('handleBuy: pistol replacement', () => {
+  function tRoom() {
+    const room = liveRoom();
+    const t = room.addPlayer(null, 'T1', 'T');
+    room.addPlayer(null, 'CT1', 'CT');
+    stepUntil(room, () => room.phase === 'freeze');
+    t.money = 3000;
+    return { room, t, items: () => [...guts(room).groundItems.values()] };
+  }
+
+  it('drops the old pistol with its ammo and blocks the buyer from walk-over re-grab', () => {
+    const { room, t, items } = tRoom();
+    expect(t.secondary?.id).toBe('glock');
+    t.secondary = { id: 'glock', ammo: 7, reserve: 40 };
+
+    room.handleBuy(t.id, 'deagle');
+    expect(t.secondary?.id).toBe('deagle');
+    expect(t.activeSlot).toBe(2);
+    expect(items()).toEqual([{ weaponId: 'glock', pos: { ...t.pos }, ammo: 7, reserve: 40, blockedFor: t.id }]);
+
+    // free the slot: walk-over must still not return the Glock to its dropper
+    t.secondary = null;
+    step(room, 3);
+    expect(t.secondary).toBeNull();
+    expect(items()).toHaveLength(1);
+  });
+
+  it('lets a teammate pick up the dropped pistol', () => {
+    const { room, t, items } = tRoom();
+    const mate = room.addPlayer(null, 'T2', 'T');
+    mate.secondary = null as typeof mate.secondary;
+    mate.pos = { ...t.pos };
+
+    room.handleBuy(t.id, 'deagle');
+    step(room, 2);
+    expect(mate.secondary?.id).toBe('glock');
+    expect(items()).toHaveLength(0);
+  });
+
+  it('drops nothing when the pistol slot is empty', () => {
+    const { room, t, items } = tRoom();
+    t.secondary = null as typeof t.secondary;
+    room.handleBuy(t.id, 'deagle');
+    expect(t.secondary?.id).toBe('deagle');
+    expect(items()).toHaveLength(0);
+  });
+
+  it('buying the pistol you hold drops the old copy and gives a fresh full one', () => {
+    const { room, t, items } = tRoom();
+    room.handleBuy(t.id, 'deagle'); // the Glock drops here
+    t.secondary = { id: 'deagle', ammo: 1, reserve: 0 };
+    const money = t.money;
+
+    room.handleBuy(t.id, 'deagle');
+    expect(t.money).toBe(money - 700);
+    expect(t.secondary?.id).toBe('deagle');
+    expect(t.secondary?.ammo).toBeGreaterThan(1);
+    const deagles = items().filter((i) => i.weaponId === 'deagle');
+    expect(deagles).toEqual([expect.objectContaining({ ammo: 1, reserve: 0, blockedFor: t.id })]);
   });
 });
 

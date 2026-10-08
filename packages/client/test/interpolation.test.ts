@@ -61,6 +61,25 @@ describe('SnapshotBuffer.sample', () => {
   });
 });
 
+describe('SnapshotBuffer.sample: entities absent from a snapshot', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('drops an id the newest bracketing snapshot no longer lists', () => {
+    const buf = new SnapshotBuffer();
+    const now = vi.spyOn(performance, 'now');
+    now.mockReturnValue(1000);
+    buf.push({ t: 's', k: 1, a: 0, p: [[1, 0, 0, 0, 100, 1, 'knife'], [2, 50, 50, 0, 100, 1, 'knife']] });
+    now.mockReturnValue(1100);
+    buf.push(snap(2, 1, 10, 0)); // id 2 left sight
+    now.mockReturnValue(1150);
+    const out = buf.sample();
+    expect(out.has(1)).toBe(true);
+    expect(out.has(2)).toBe(false);
+  });
+});
+
 describe('SnapshotBuffer.latestFor', () => {
   it('returns the raw (non-interpolated) latest state for a known id, undefined otherwise', () => {
     const buf = new SnapshotBuffer();

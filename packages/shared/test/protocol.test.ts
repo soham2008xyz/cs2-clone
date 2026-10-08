@@ -43,6 +43,15 @@ describe('validateClientMsg', () => {
       expect(validateClientMsg({ ...base, b: -1 })).toBeNull();
       expect(validateClientMsg({ ...base, b: 1 << 20 })).toBeNull();
     });
+    it('keeps an optional spectate target and rejects a non-integer or negative one', () => {
+      expect(validateClientMsg({ ...base, sp: 3 })).toEqual({ ...base, sp: 3 });
+      expect(validateClientMsg({ ...base, sp: 0 })).toEqual({ ...base, sp: 0 });
+      expect(validateClientMsg(base)).not.toHaveProperty('sp');
+      for (const sp of ['3', 1.5, -1, null, NaN]) expect(validateClientMsg({ ...base, sp })).toBeNull();
+    });
+    it('keeps sp through parseClientMsg on a raw JSON input', () => {
+      expect(parseClientMsg(JSON.stringify({ ...base, sp: 7 }))).toEqual({ ...base, sp: 7 });
+    });
     it('rejects a slot outside the integers 1..4', () => {
       for (const w of ['x', 1.5, 0, 5, -1, null]) expect(validateClientMsg({ ...base, w })).toBeNull();
       for (const w of [1, 2, 3, 4]) expect(validateClientMsg({ ...base, w })).toMatchObject({ w });
