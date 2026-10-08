@@ -577,32 +577,32 @@ export class Room {
     // USE also picks up guns — including one you just dropped (walk-over pickup skips those)
     if (using && p.alive) this.tryPickup(p, true);
 
-    // planting
+    const action = this.bombAction(p);
+    if (!action?.inZone || !using || moved || !p.alive) {
+      p.actionStartTick = 0;
+      return;
+    }
+    if (p.actionStartTick === 0) p.actionStartTick = this.tick;
+    if (this.tick - p.actionStartTick >= action.ticks) action.complete();
+  }
+
+  /** The plant (T carrier, live) or defuse (CT, planted) this player could perform now, if any. */
+  private bombAction(p: PlayerConn): { inZone: boolean; ticks: number; complete: () => void } | null {
     if (p.team === 'T' && p.hasBomb && this.phase === 'live') {
-      const onSite = this.map.siteAt(p.pos.x, p.pos.y) !== null;
-      if (using && onSite && !moved && p.alive) {
-        if (p.actionStartTick === 0) p.actionStartTick = this.tick;
-        if (this.tick - p.actionStartTick >= sec(this.times.plant)) this.plantBomb(p);
-      } else {
-        p.actionStartTick = 0;
-      }
-      return;
+      return {
+        inZone: this.map.siteAt(p.pos.x, p.pos.y) !== null,
+        ticks: sec(this.times.plant),
+        complete: () => this.plantBomb(p),
+      };
     }
-
-    // defusing
     if (p.team === 'CT' && this.phase === 'planted') {
-      const nearBomb = dist(p.pos, this.bomb.pos) <= DEFUSE_RADIUS;
-      if (using && nearBomb && !moved && p.alive) {
-        if (p.actionStartTick === 0) p.actionStartTick = this.tick;
-        const needed = sec(p.hasKit ? this.times.defuseKit : this.times.defuse);
-        if (this.tick - p.actionStartTick >= needed) this.defuseBomb();
-      } else {
-        p.actionStartTick = 0;
-      }
-      return;
+      return {
+        inZone: dist(p.pos, this.bomb.pos) <= DEFUSE_RADIUS,
+        ticks: sec(p.hasKit ? this.times.defuseKit : this.times.defuse),
+        complete: () => this.defuseBomb(),
+      };
     }
-
-    p.actionStartTick = 0;
+    return null;
   }
 
   private plantBomb(p: PlayerConn): void {
