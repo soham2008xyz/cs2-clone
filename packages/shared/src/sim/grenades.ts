@@ -4,7 +4,6 @@ import {
   GRENADE_DRAG,
   GRENADE_FRICTION,
   GRENADE_RADIUS,
-  HE_ARMOR_PEN,
   HE_MAX_DAMAGE,
   HE_RADIUS,
 } from '../constants.js';
@@ -85,7 +84,7 @@ export function resolveHeDamage(
   return out;
 }
 
-export const HE_ARMOR_PENETRATION = HE_ARMOR_PEN;
+export { HE_ARMOR_PEN as HE_ARMOR_PENETRATION } from '../constants.js';
 
 export interface BlindResult {
   id: number;

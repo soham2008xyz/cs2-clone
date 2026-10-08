@@ -28,37 +28,27 @@ function collides(map: CompiledMap, cx: number, cy: number, r: number): boolean 
 }
 
 /**
+ * Resolve movement along one axis: take the full step if it's free, otherwise
+ * snap flush against the blocking tile boundary (or stay put in corner cases).
+ */
+function resolveAxis(start: number, delta: number, radius: number, blocked: (v: number) => boolean): number {
+  if (delta === 0) return start;
+  const next = start + delta;
+  if (!blocked(next)) return next;
+  const snapped =
+    delta > 0
+      ? Math.floor((next + radius) / TILE_SIZE) * TILE_SIZE - radius - EPS
+      : (Math.floor((next - radius) / TILE_SIZE) + 1) * TILE_SIZE + radius + EPS;
+  return blocked(snapped) ? start : snapped; // corner case: keep old position
+}
+
+/**
  * Move a circle through the tile grid with axis-separated resolution
  * (produces natural wall sliding). Returns the resolved position.
  */
 export function moveCircle(pos: Vec2, delta: Vec2, radius: number, map: CompiledMap): Vec2 {
-  let x = pos.x;
-  let y = pos.y;
-
-  // X axis: snap to the tile boundary on collision
-  if (delta.x !== 0) {
-    const nx = x + delta.x;
-    if (!collides(map, nx, y, radius)) {
-      x = nx;
-    } else {
-      const tile = delta.x > 0 ? Math.floor((nx + radius) / TILE_SIZE) : Math.floor((nx - radius) / TILE_SIZE);
-      x = delta.x > 0 ? tile * TILE_SIZE - radius - EPS : (tile + 1) * TILE_SIZE + radius + EPS;
-      if (collides(map, x, y, radius)) x = pos.x; // corner case: keep old x
-    }
-  }
-
-  // Y axis
-  if (delta.y !== 0) {
-    const ny = y + delta.y;
-    if (!collides(map, x, ny, radius)) {
-      y = ny;
-    } else {
-      const tile = delta.y > 0 ? Math.floor((ny + radius) / TILE_SIZE) : Math.floor((ny - radius) / TILE_SIZE);
-      y = delta.y > 0 ? tile * TILE_SIZE - radius - EPS : (tile + 1) * TILE_SIZE + radius + EPS;
-      if (collides(map, x, y, radius)) y = pos.y;
-    }
-  }
-
+  const x = resolveAxis(pos.x, delta.x, radius, (v) => collides(map, v, pos.y, radius));
+  const y = resolveAxis(pos.y, delta.y, radius, (v) => collides(map, x, v, radius));
   return { x, y };
 }
 

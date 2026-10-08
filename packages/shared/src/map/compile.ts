@@ -2,37 +2,66 @@ import { TILE_SIZE } from '../constants.js';
 import type { Vec2 } from '../math.js';
 import { CH, type CompiledMap, type MapDef, type TeamId } from './types.js';
 
-export function compileMap(def: MapDef): CompiledMap {
-  const height = def.grid.length;
-  const width = def.grid[0].length;
+interface SiteAccumulator {
+  x: number;
+  y: number;
+  n: number;
+}
+
+interface GridScan {
+  solid: Uint8Array;
+  spawns: Record<TeamId, Vec2[]>;
+  siteTiles: Map<number, 'A' | 'B'>;
+  siteAcc: Record<'A' | 'B', SiteAccumulator>;
+}
+
+function assertRectangular(def: MapDef, width: number): void {
   for (const row of def.grid) {
     if (row.length !== width) {
       throw new Error(`map ${def.name}: ragged grid row (expected ${width}, got ${row.length})`);
     }
   }
+}
 
-  const solid = new Uint8Array(width * height);
-  const spawns: Record<TeamId, Vec2[]> = { T: [], CT: [] };
-  const siteTiles = new Map<number, 'A' | 'B'>();
-  const siteAcc = { A: { x: 0, y: 0, n: 0 }, B: { x: 0, y: 0, n: 0 } };
+function scanTile(scan: GridScan, ch: string, i: number, center: Vec2): void {
+  if (ch === CH.WALL || ch === CH.BOX) scan.solid[i] = 1;
+  if (ch === CH.T_SPAWN) scan.spawns.T.push(center);
+  if (ch === CH.CT_SPAWN) scan.spawns.CT.push(center);
+  if (ch === CH.SITE_A || ch === CH.SITE_B) {
+    const site = ch === CH.SITE_A ? 'A' : 'B';
+    scan.siteTiles.set(i, site);
+    scan.siteAcc[site].x += center.x;
+    scan.siteAcc[site].y += center.y;
+    scan.siteAcc[site].n++;
+  }
+}
 
+function scanGrid(def: MapDef, width: number, height: number): GridScan {
+  const scan: GridScan = {
+    solid: new Uint8Array(width * height),
+    spawns: { T: [], CT: [] },
+    siteTiles: new Map(),
+    siteAcc: { A: { x: 0, y: 0, n: 0 }, B: { x: 0, y: 0, n: 0 } },
+  };
   for (let ty = 0; ty < height; ty++) {
     for (let tx = 0; tx < width; tx++) {
-      const ch = def.grid[ty][tx];
-      const i = ty * width + tx;
-      if (ch === CH.WALL || ch === CH.BOX) solid[i] = 1;
       const center: Vec2 = { x: (tx + 0.5) * TILE_SIZE, y: (ty + 0.5) * TILE_SIZE };
-      if (ch === CH.T_SPAWN) spawns.T.push(center);
-      if (ch === CH.CT_SPAWN) spawns.CT.push(center);
-      if (ch === CH.SITE_A || ch === CH.SITE_B) {
-        const site = ch === CH.SITE_A ? 'A' : 'B';
-        siteTiles.set(i, site);
-        siteAcc[site].x += center.x;
-        siteAcc[site].y += center.y;
-        siteAcc[site].n++;
-      }
+      scanTile(scan, def.grid[ty][tx], ty * width + tx, center);
     }
   }
+  return scan;
+}
+
+function siteCenter(acc: SiteAccumulator): Vec2 | null {
+  return acc.n > 0 ? { x: acc.x / acc.n, y: acc.y / acc.n } : null;
+}
+
+export function compileMap(def: MapDef): CompiledMap {
+  const height = def.grid.length;
+  const width = def.grid[0].length;
+  assertRectangular(def, width);
+
+  const { solid, spawns, siteTiles, siteAcc } = scanGrid(def, width, height);
 
   if (spawns.T.length === 0 || spawns.CT.length === 0) {
     throw new Error(`map ${def.name}: missing spawns for one or both teams`);
@@ -43,10 +72,7 @@ export function compileMap(def: MapDef): CompiledMap {
     return solid[ty * width + tx] === 1;
   };
 
-  const siteCenters = {
-    A: siteAcc.A.n > 0 ? { x: siteAcc.A.x / siteAcc.A.n, y: siteAcc.A.y / siteAcc.A.n } : null,
-    B: siteAcc.B.n > 0 ? { x: siteAcc.B.x / siteAcc.B.n, y: siteAcc.B.y / siteAcc.B.n } : null,
-  };
+  const siteCenters = { A: siteCenter(siteAcc.A), B: siteCenter(siteAcc.B) };
 
   return {
     def,

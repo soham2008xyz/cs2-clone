@@ -81,8 +81,8 @@ describe('HE damage', () => {
     const center = at(2, 6);
     const targets = [{ id: 1, pos: at(2, 8), alive: true }]; // same side, in radius, should hit
     const blocked = [{ id: 2, pos: at(16, 6), alive: true }]; // across the wall — out of HE radius anyway but also blocked
-    expect(resolveHeDamage(center, targets, map).length).toBe(1);
-    expect(resolveHeDamage(center, blocked, map).length).toBe(0);
+    expect(resolveHeDamage(center, targets, map)).toHaveLength(1);
+    expect(resolveHeDamage(center, blocked, map)).toHaveLength(0);
   });
 
   it('ignores dead targets', () => {
@@ -129,7 +129,7 @@ describe('flash blind', () => {
     const target = { id: 1, pos: at(10, 2), aim: Math.PI, alive: true };
     const noSmoke = resolveFlashBlind(pop, [target], map);
     const withSmoke = resolveFlashBlind(pop, [target], map, [{ pos: at(6, 2), radius: 60 }]);
-    expect(noSmoke.length).toBe(1);
-    expect(withSmoke.length).toBe(0);
+    expect(noSmoke).toHaveLength(1);
+    expect(withSmoke).toHaveLength(0);
   });
 });
