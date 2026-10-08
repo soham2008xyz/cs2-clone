@@ -93,18 +93,44 @@ describe('traceShot', () => {
     expect(r.hit?.targetId).toBe(1);
   });
 
-  it('a target overlapping the shooter is not hit (dist<=0 guard)', () => {
-    const shooter = at(2, 2);
-    const onTopOfShooter = { id: 1, pos: { ...shooter }, team: 'CT' as const, alive: true };
-    const r = traceShot({ origin: shooter, aim: 0, spread: 0, weapon: ak, shooterTeam: 'T' }, [onTopOfShooter], map, mulberry32(1));
-    expect(r.hit).toBeNull();
-  });
-
   it('a target directly behind the shooter is not hit', () => {
     const shooter = at(10, 2);
     const behind = { id: 1, pos: at(2, 2), team: 'CT' as const, alive: true }; // aim faces +x, target is to the west
     const r = traceShot({ origin: shooter, aim: 0, spread: 0, weapon: ak, shooterTeam: 'T' }, [behind], map, mulberry32(1));
     expect(r.hit).toBeNull();
+  });
+
+  it('point-blank: a target overlapping the muzzle is hit at distance 0', () => {
+    const shooter = at(10, 2);
+    const overlap = { id: 5, pos: { x: shooter.x + 6, y: shooter.y }, team: 'CT' as const, alive: true }; // inside PLAYER_RADIUS
+    const r = traceShot({ origin: shooter, aim: 0, spread: 0, weapon: ak, shooterTeam: 'T' }, [overlap], map, mulberry32(1));
+    expect(r.hit?.targetId).toBe(5);
+    expect(r.hit?.distance).toBe(0);
+    expect(r.hit?.rawDamage).toBe(ak.damage);
+    // even when the overlapping player is behind the aim line, the muzzle is inside them
+    const behind = { id: 6, pos: { x: shooter.x - 6, y: shooter.y }, team: 'CT' as const, alive: true };
+    const r2 = traceShot({ origin: shooter, aim: 0, spread: 0, weapon: ak, shooterTeam: 'T' }, [behind], map, mulberry32(1));
+    expect(r2.hit?.targetId).toBe(6);
+  });
+
+  it('point-blank: knife hits an overlapping target', () => {
+    const knife = getWeapon('knife');
+    const shooter = at(10, 2);
+    const overlap = { id: 5, pos: { x: shooter.x + 4, y: shooter.y + 3 }, team: 'CT' as const, alive: true };
+    const r = traceShot({ origin: shooter, aim: 1, spread: 0, weapon: knife, shooterTeam: 'T' }, [overlap], map, mulberry32(1));
+    expect(r.hit?.targetId).toBe(5);
+  });
+
+  it('point-blank: the nearest target wins and a dead or friendly overlap is ignored', () => {
+    const shooter = at(10, 2);
+    const near = { id: 1, pos: { x: shooter.x + 3, y: shooter.y }, team: 'CT' as const, alive: true };
+    const far = { id: 2, pos: { x: shooter.x + 100, y: shooter.y }, team: 'CT' as const, alive: true };
+    const dead = { id: 3, pos: { ...shooter }, team: 'CT' as const, alive: false };
+    const mate = { id: 4, pos: { ...shooter }, team: 'T' as const, alive: true };
+    const r = traceShot({ origin: shooter, aim: 0, spread: 0, weapon: ak, shooterTeam: 'T' }, [far, dead, mate, near], map, mulberry32(1));
+    expect(r.hit?.targetId).toBe(1);
+    const none = traceShot({ origin: shooter, aim: 0, spread: 0, weapon: ak, shooterTeam: 'T' }, [dead, mate], map, mulberry32(1));
+    expect(none.hit).toBeNull();
   });
 
   it('knife cannot reach across the room', () => {

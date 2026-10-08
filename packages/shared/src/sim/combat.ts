@@ -80,8 +80,9 @@ export function traceShot(
   for (const t of targets) {
     if (!t.alive) continue;
     if (!friendlyFire && t.team === shooterTeam) continue;
+    // dist 0 = the muzzle is inside the target's circle (players overlap): a point-blank hit
     const dist = rayCircle(origin, d, t.pos, PLAYER_RADIUS);
-    if (dist === null || dist <= 0 || dist >= wallDist || dist > weapon.range) continue;
+    if (dist === null || dist >= wallDist || dist > weapon.range) continue;
     if (!best || dist < best.distance) {
       best = { targetId: t.id, distance: dist, rawDamage: weapon.damage * falloff(weapon, dist) };
     }
