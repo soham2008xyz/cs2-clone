@@ -95,4 +95,20 @@ describe('menu capacity handling', () => {
     await flush();
     expect(document.getElementById('menu-error')!.textContent).toContain(text);
   });
+
+  it('explains a 503 on quick play too', async () => {
+    createRoom.mockRejectedValue(new CreateRoomError(503));
+    initMenu(() => {});
+    document.getElementById('menu-quickplay')!.click();
+    await flush();
+    expect(document.getElementById('menu-error')!.textContent).toContain('server is full');
+  });
+
+  it('keeps the generic message for other create failures', async () => {
+    createRoom.mockRejectedValue(new Error('network down'));
+    initMenu(() => {});
+    document.getElementById('menu-create')!.click();
+    await flush();
+    expect(document.getElementById('menu-error')!.textContent).toContain('is the server running');
+  });
 });
