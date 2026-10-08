@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-Node `>=22.22.2 <23`, npm workspaces (`@cs2d/shared`, `@cs2d/server`, `@cs2d/client`).
+Node `>=24.15.0 <25`, npm workspaces (`@cs2d/shared`, `@cs2d/server`, `@cs2d/client`).
 
 ```bash
 npm install
