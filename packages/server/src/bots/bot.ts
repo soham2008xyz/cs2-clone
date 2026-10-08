@@ -52,6 +52,9 @@ const nearestSite = (map: CompiledMap, pos: Vec2): 'A' | 'B' => {
   return dist(pos, A) <= dist(pos, B) ? 'A' : 'B';
 };
 
+/** Post-plant, a T within this distance of the bomb stops and holds. */
+const T_GUARD_RADIUS = TILE_SIZE * 3;
+
 /** Site center with a same-map fallback — defends computeGoal against a null goal even if a caller ever passes a stale/invalid site. */
 const siteGoal = (map: CompiledMap, site: 'A' | 'B'): Vec2 | null => map.siteCenters[site] ?? map.siteCenters[site === 'A' ? 'B' : 'A'];
 
@@ -262,8 +265,10 @@ export class BotController {
   private computeGoal(room: Room, p: PlayerConn, tick: number): Vec2 | null {
     const map = room.map;
     if (room.phase === 'planted') {
-      // post-plant: CTs converge on the bomb, Ts hold their site
-      return p.team === 'CT' ? room.bombInfo.pos : siteGoal(map, this.assignedSite);
+      // post-plant: CTs converge on the bomb, Ts guard wherever it was planted (not their assigned site)
+      const bombPos = room.bombInfo.pos;
+      if (p.team === 'CT') return bombPos;
+      return this.isHoldingBomb(room, p.pos, bombPos) ? null : bombPos;
     }
     if (p.hp < SAVE_HP && !p.hasBomb) return map.spawns[p.team][0]; // save the gun
     if (p.team === 'T' && !p.hasBomb && room.bombInfo.mode === 'dropped') return room.bombInfo.pos; // retrieve it — don't strand the objective
@@ -271,6 +276,13 @@ export class BotController {
       return siteGoal(map, room.botIntel.site); // rotate on a teammate's sighting
     }
     return siteGoal(map, this.assignedSite);
+  }
+
+  /** Near the bomb with a clear view of it and out of any fire: stop and hold instead of standing on it. */
+  private isHoldingBomb(room: Room, pos: Vec2, bombPos: Vec2): boolean {
+    if (dist(pos, bombPos) > T_GUARD_RADIUS) return false;
+    if (room.fireInfo.zones.some((z) => dist(pos, z.pos) < z.radius)) return false; // keep a goal so the path avoids fire
+    return hasLineOfSight(pos, bombPos, room.map, [], T_GUARD_RADIUS + TILE_SIZE); // walled off: path around
   }
 
   private findVisibleEnemy(room: Room, p: PlayerConn): PlayerConn | null {
