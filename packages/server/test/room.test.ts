@@ -264,6 +264,92 @@ describe('utility friendly fire & attribution', () => {
     expect(ct.hp).toBe(100); // FF off: teammate not burned
     expect(t.hp).toBeCloseTo(100 - MOLOTOV_DPS * TICK_DT, 5); // exactly one zone's tick, not two
   });
+
+  it('fire does not burn through a wall', () => {
+    const room = new Room('dust2', FAST); // testarena is one open room, so use a map with interior walls
+    const owner = room.addPlayer(null, 'T1', 'T');
+    const victim = room.addPlayer(null, 'CT1', 'CT');
+    stepUntil(room, () => room.phase === 'live');
+
+    // a thin wall with open floor on both sides, so both points are well inside MOLOTOV_RADIUS
+    const { map } = room;
+    let spot: { wall: { x: number; y: number } } | null = null;
+    for (let ty = 1; ty < map.height - 1 && !spot; ty++) {
+      for (let tx = 2; tx < map.width - 2 && !spot; tx++) {
+        if (map.isSolid(tx, ty) && !map.isSolid(tx - 1, ty) && !map.isSolid(tx + 1, ty)) spot = { wall: { x: tx, y: ty } };
+      }
+    }
+    expect(spot).not.toBeNull();
+    const fire = { x: (spot!.wall.x - 1 + 0.5) * 32, y: (spot!.wall.y + 0.5) * 32 };
+    const behind = { x: (spot!.wall.x + 1 + 0.5) * 32, y: fire.y };
+    owner.pos = { x: 5000, y: 5000 };
+    victim.pos = { ...behind };
+    const until = room.tick + 600;
+    guts(room).fires.set(301, { id: 301, kind: 'molotov', pos: fire, untilTick: until, ownerId: owner.id, ownerTeam: 'T' });
+
+    step(room, 5);
+    expect(victim.hp).toBe(100); // wall between fire and player
+
+    victim.pos = { ...fire }; // control: same fire, no wall, burns
+    step(room, 1);
+    expect(victim.hp).toBeLessThan(100);
+  });
+
+  it('fire still burns through smoke', () => {
+    const { room } = liveRoom();
+    const owner = room.addPlayer(null, 'T1', 'T');
+    const victim = room.addPlayer(null, 'CT1', 'CT');
+    stepUntil(room, () => room.phase === 'live');
+    owner.pos = { x: 5000, y: 5000 };
+    const pos = { x: 300, y: 150 };
+    victim.pos = { x: pos.x + 40, y: pos.y };
+    (guts(room).smokes as Map<number, unknown>).set(1, { id: 1, pos: { x: pos.x + 20, y: pos.y }, bornTick: room.tick, untilTick: room.tick + 600, ownerId: owner.id });
+    guts(room).fires.set(302, { id: 302, kind: 'molotov', pos, untilTick: room.tick + 600, ownerId: owner.id, ownerTeam: 'T' });
+    step(room, 1);
+    expect(victim.hp).toBeLessThan(100);
+  });
+
+  it('snapshots and hurt events carry whole-number hp from fire', () => {
+    const { room } = liveRoom();
+    const owner = room.addPlayer(null, 'T1', 'T');
+    const rec = fakeWs();
+    const victim = room.addPlayer(rec.ws, 'CT1', 'CT');
+    stepUntil(room, () => room.phase === 'live');
+    owner.pos = { x: 5000, y: 5000 };
+    guts(room).fires.set(303, { id: 303, kind: 'molotov', pos: { ...victim.pos }, untilTick: room.tick + 600, ownerId: owner.id, ownerTeam: 'T' });
+    rec.msgs.length = 0;
+    step(room, 20);
+
+    expect(Number.isInteger(victim.hp)).toBe(false); // internal hp stays fractional
+    const snaps = rec.msgs.filter((m): m is Record<string, unknown> & SnapshotMsg => m.t === 's');
+    const hps = snaps.flatMap((m) => m.p.filter((q) => q[0] === victim.id).map((q) => q[4]));
+    expect(hps.length).toBeGreaterThan(0);
+    for (const hp of hps) expect(Number.isInteger(hp)).toBe(true);
+    expect(hps[hps.length - 1]).toBe(Math.ceil(victim.hp));
+
+    const hurts = snaps.flatMap((m) => m.ev ?? []).filter((e): e is Extract<GameEvent, { e: 'hurt' }> => e.e === 'hurt');
+    expect(hurts.length).toBeGreaterThan(0);
+    for (const h of hurts) expect(Number.isInteger(h.d)).toBe(true);
+    // reported damage adds up to the whole points the HUD lost
+    expect(hurts.reduce((a, h) => a + h.d, 0)).toBe(100 - Math.ceil(victim.hp));
+  });
+
+  it('a sliver of hp still shows as 1 in snapshots until the player dies', () => {
+    const { room } = liveRoom();
+    const owner = room.addPlayer(null, 'T1', 'T');
+    const rec = fakeWs();
+    const victim = room.addPlayer(rec.ws, 'CT1', 'CT');
+    stepUntil(room, () => room.phase === 'live');
+    owner.pos = { x: 5000, y: 5000 };
+    victim.hp = 1.6;
+    guts(room).fires.set(304, { id: 304, kind: 'molotov', pos: { ...victim.pos }, untilTick: room.tick + 600, ownerId: owner.id, ownerTeam: 'T' });
+    rec.msgs.length = 0;
+    step(room, 2); // 1.6 -> ~0.27: alive, shown as 1
+    expect(victim.alive).toBe(true);
+    const snaps = rec.msgs.filter((m): m is Record<string, unknown> & SnapshotMsg => m.t === 's');
+    const last = snaps[snaps.length - 1]!.p.find((q) => q[0] === victim.id)!;
+    expect(last[4]).toBe(1);
+  });
 });
 
 describe('gameplay features', () => {

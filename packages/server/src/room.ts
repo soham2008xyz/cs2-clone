@@ -41,6 +41,7 @@ import {
   PRICE_HELMET,
   PRICE_KEVLAR,
   resolveFlashBlind,
+  hasLineOfSight,
   resolveHeDamage,
   ROUND_END_TIME,
   ROUND_TIME,
@@ -1023,9 +1024,11 @@ export class Room {
       for (const p of this.players.values()) {
         if (burned.has(p.id) || !this.fireReaches(f, p)) continue;
         burned.add(p.id);
-        const d = MOLOTOV_DPS * TICK_DT;
-        p.hp -= d;
-        this.emit({ e: 'hurt', d, from: f.ownerId }, p.id);
+        // keep fractional hp, but report whole points: hurt fires when displayed hp drops
+        const shownBefore = Math.ceil(p.hp);
+        p.hp -= MOLOTOV_DPS * TICK_DT;
+        const d = shownBefore - Math.max(0, Math.ceil(p.hp));
+        if (d > 0) this.emit({ e: 'hurt', d, from: f.ownerId }, p.id);
         if (p.hp <= 0) this.killByUtility(p, f.ownerId, f.kind);
       }
     }
@@ -1034,6 +1037,7 @@ export class Room {
   /** Alive, inside the fire, and not a teammate of its thrower (unless friendly fire / own fire). */
   private fireReaches(f: FireZone, p: PlayerConn): boolean {
     if (!p.alive || dist(p.pos, f.pos) > MOLOTOV_RADIUS) return false;
+    if (!hasLineOfSight(f.pos, p.pos, this.map, [], MOLOTOV_RADIUS)) return false; // walls stop fire; smoke doesn't
     return FRIENDLY_FIRE || p.id === f.ownerId || p.team !== f.ownerTeam;
   }
 
@@ -1235,7 +1239,7 @@ export class Room {
         Math.round(p.pos.x * 10) / 10,
         Math.round(p.pos.y * 10) / 10,
         Math.round(p.aim * 1000) / 1000,
-        p.hp,
+        Math.max(0, Math.ceil(p.hp)), // fire leaves fractional hp; a sliver still shows 1
         flags,
         activeWeapon(p).id,
       ]);
