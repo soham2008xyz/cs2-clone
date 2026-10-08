@@ -560,7 +560,7 @@ export class GameScene extends Phaser.Scene {
       const buttons = this.pollButtons();
       const mobility = this.me ? getWeapon(this.me.weapon).mobility : 1;
       const canMove = this.alive && this.match?.ph !== 'freeze';
-      const input = this.predictor.buildInput(buttons, aim, this.lastServerTick, this.pendingSlot, this.alive ? undefined : this.spectateTarget);
+      const input = this.predictor.buildInput(buttons, aim, this.lastServerTick, this.pendingSlot, this.alive || this.spectateTarget < 0 || this.spectateTarget === this.myId ? undefined : this.spectateTarget);
       this.pendingSlot = undefined;
       this.predictor.applyLocal(input, canMove, mobility);
       this.conn.send(input);

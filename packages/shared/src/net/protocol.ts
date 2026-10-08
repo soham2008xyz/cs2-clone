@@ -213,6 +213,10 @@ export function validateClientMsg(v: unknown): ClientMsg | null {
         if (!isNum(v.k)) return null;
         msg.k = v.k;
       }
+      if (v.sp !== undefined) {
+        if (!Number.isInteger(v.sp) || (v.sp as number) < 0) return null;
+        msg.sp = v.sp as number;
+      }
       return msg;
     }
     case 'buy':

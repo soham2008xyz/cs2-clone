@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { WebSocket } from 'ws';
-import { getMap, hasLineOfSight, VISION_RANGE, type GameEvent, type SnapshotMsg, type Vec2 } from '@cs2d/shared';
+import { getMap, hasLineOfSight, parseClientMsg, VISION_RANGE, type GameEvent, type InputMsg, type SnapshotMsg, type Vec2 } from '@cs2d/shared';
 import { Room, type PlayerConn } from '../src/room.js';
 import { VIS_GRACE_TICKS } from '../src/visibility.js';
 
@@ -168,15 +168,16 @@ describe('per-recipient snapshots (fog of war)', () => {
     expect(ids(rec3)).not.toContain(s.ct1.id);
     expect(ids(s.rec.t2)).toContain(s.ct1.id);
     s.t1.alive = false;
-    const seq = (n: number) => ({ t: 'i' as const, s: n, b: 0, a: 0 });
-    s.room.handleInput(s.t1.id, { ...seq(1), sp: s.t2.id });
+    // go through the real wire path: the validator must keep `sp`
+    const wire = (n: number, sp: number) => parseClientMsg(JSON.stringify({ t: 'i', s: n, b: 0, a: 0, sp })) as InputMsg;
+    s.room.handleInput(s.t1.id, wire(1, s.t2.id));
     step(s.room, 4);
     expect(ids(s.rec.t1)).toContain(s.ct1.id); // follows T2, who sees CT1
     expect(ids(s.rec.t1)).toContain(s.t2.id);
-    s.room.handleInput(s.t1.id, { ...seq(2), sp: t3.id });
+    s.room.handleInput(s.t1.id, wire(2, t3.id));
     step(s.room, VIS_GRACE_TICKS + 4);
     expect(ids(s.rec.t1)).not.toContain(s.ct1.id); // follows T3, who doesn't; T2's view is not shared
-    s.room.handleInput(s.t1.id, { ...seq(3), sp: 9999 }); // bogus target: falls back to a living teammate
+    s.room.handleInput(s.t1.id, wire(3, 9999)); // bogus target: falls back to a living teammate
     step(s.room, 4);
     expect(ids(s.rec.t1)).toContain(s.t1.id);
   });
