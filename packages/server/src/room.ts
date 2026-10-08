@@ -214,7 +214,8 @@ export class Room {
   private bomb: BombState = { mode: 'none', pos: { x: 0, y: 0 }, carrierId: 0, explodeTick: 0 };
   private bombWasPlanted = false;
   private liveStartTick = 0;
-  private groundItems = new Map<number, { weaponId: string; pos: Vec2; ammo: number; reserve: number }>();
+  /** `blockedFor`: id of the player who dropped it — they can't walk-over re-grab it until they step out of reach (0 = nobody). */
+  private groundItems = new Map<number, { weaponId: string; pos: Vec2; ammo: number; reserve: number; blockedFor: number }>();
   private nextItemId = 1;
   private activeNades = new Map<number, ActiveNade>();
   private smokes = new Map<number, SmokeZone>();
@@ -484,12 +485,15 @@ export class Room {
       pos: { x: p.pos.x, y: p.pos.y },
       ammo: slot.ammo,
       reserve: slot.reserve,
+      blockedFor: p.id,
     });
   }
 
-  private tryPickup(p: PlayerConn): void {
+  /** USE pickup (`manual`) ignores the dropper block; walk-over pickup respects it. */
+  private tryPickup(p: PlayerConn, manual: boolean): void {
     for (const [itemId, item] of this.groundItems) {
       if (dist(item.pos, p.pos) > PICKUP_RADIUS) continue;
+      if (!manual && item.blockedFor === p.id) continue;
       const w = getWeapon(item.weaponId);
       const slot: WeaponSlot = { id: item.weaponId, ammo: item.ammo, reserve: item.reserve };
       if (w.cls === 'pistol') {
@@ -529,6 +533,18 @@ export class Room {
     }
   }
 
+  /** Walk-over pickup: every live player collects guns they stand on (if the slot is free). */
+  private groundPickupCheck(): void {
+    for (const item of this.groundItems.values()) {
+      if (item.blockedFor === 0) continue;
+      const dropper = this.players.get(item.blockedFor);
+      if (!dropper || !dropper.alive || dist(dropper.pos, item.pos) > PICKUP_RADIUS) item.blockedFor = 0;
+    }
+    for (const p of this.players.values()) {
+      if (p.alive) this.tryPickup(p, false);
+    }
+  }
+
   private dropBomb(p: PlayerConn): void {
     if (!p.hasBomb) return;
     p.hasBomb = false;
@@ -553,8 +569,8 @@ export class Room {
     const using = (input.b & BTN.USE) !== 0;
     const moving = (input.b & (BTN.UP | BTN.DOWN | BTN.LEFT | BTN.RIGHT)) !== 0;
 
-    // pick up dropped primaries with USE
-    if (using && p.alive) this.tryPickup(p);
+    // USE also picks up guns — including one you just dropped (walk-over pickup skips those)
+    if (using && p.alive) this.tryPickup(p, true);
 
     // planting
     if (p.team === 'T' && p.hasBomb && this.phase === 'live') {
@@ -1101,6 +1117,7 @@ export class Room {
 
     this.updateGrenades();
     this.bombPickupCheck();
+    this.groundPickupCheck();
     this.checkWinConditions();
 
     this.lagComp.record(this.tick, this.players.values());

@@ -47,7 +47,7 @@ first connection after idle, not mid-game.
 | Shift | Walk (quieter, no movement inaccuracy) |
 | Mouse | Aim / hold to fire |
 | R | Reload |
-| E | Use (plant / defuse / pick up dropped weapon) |
+| E | Use (plant / defuse / pick up dropped weapon — walking over one also picks it up if the slot is free) |
 | G | Drop the held gun |
 | 1 / 2 / 3 / 4 | Primary / secondary / knife / grenade |
 | B | Buy menu (freezetime or first 20s of a round, inside your buy zone) |
