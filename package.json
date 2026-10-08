@@ -7,7 +7,7 @@
     "packages/*"
   ],
   "engines": {
-    "node": ">=22.22.2 <23"
+    "node": ">=24.15.0 <25"
   },
   "scripts": {
     "dev:server": "npm run dev -w @cs2d/server",
@@ -15,7 +15,8 @@
     "build": "npm run build -w @cs2d/client && npm run build -w @cs2d/server",
     "test": "npm run test -w @cs2d/shared && npm run test -w @cs2d/server && npm run test -w @cs2d/client",
     "test:coverage": "npm run test:coverage -w @cs2d/shared && npm run test:coverage -w @cs2d/server && npm run test:coverage -w @cs2d/client",
-    "test:integration": "node scripts/integration-round.mjs && node scripts/integration-bots.mjs",
+    "test:integration": "node scripts/integration-round.mjs && node scripts/integration-bots.mjs && node scripts/integration-malformed.mjs",
+    "typecheck": "npm run typecheck -w @cs2d/shared && npm run typecheck -w @cs2d/server && npm run typecheck -w @cs2d/client",
     "start": "npm run start -w @cs2d/server"
   }
 }

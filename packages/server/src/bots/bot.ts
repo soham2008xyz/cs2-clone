@@ -152,7 +152,7 @@ export class BotController {
     const enemy = blind ? null : this.findVisibleEnemy(room, p);
     const decision = enemy ? this.engage(room, p, enemy, tick) : this.roam(room, p, tick, blind);
 
-    const input: InputMsg = { t: 'i', s: ++this.seq, b: decision.buttons, a: decision.aim, k: tick };
+    const input: InputMsg = { t: 'i', s: ++this.seq, b: decision.buttons, a: decision.aim };
     if (decision.switchSlot) input.w = decision.switchSlot;
     room.handleInput(this.playerId, input);
   }

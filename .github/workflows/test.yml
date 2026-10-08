@@ -18,7 +18,7 @@ jobs:
 
     strategy:
       matrix:
-        node-version: [22]
+        node-version: [24]
 
     steps:
       - uses: actions/checkout@v7
@@ -39,8 +39,8 @@ jobs:
       - name: Run tests with coverage
         run: npm run test:coverage
 
-      - name: Typecheck client
-        run: npm run typecheck -w @cs2d/client
+      - name: Typecheck
+        run: npm run typecheck
 
       - name: Run integration tests
         run: npm run test:integration
@@ -53,5 +53,5 @@ jobs:
 
       # Skipped when SONAR_TOKEN is unavailable (e.g. PRs from forks)
       - name: SonarCloud scan
-        if: matrix.node-version == 22 && env.SONAR_TOKEN != ''
+        if: matrix.node-version == 24 && env.SONAR_TOKEN != ''
         uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9 # v8.3.0

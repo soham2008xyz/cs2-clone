@@ -265,7 +265,13 @@ export class Room {
 
   start(): void {
     if (this.timer) return;
-    this.timer = setInterval(() => this.step(), 1000 / TICK_RATE);
+    this.timer = setInterval(() => {
+      try {
+        this.step();
+      } catch (err) {
+        console.error('[room] tick failed:', err); // one bad tick must not kill every room
+      }
+    }, 1000 / TICK_RATE);
   }
 
   stop(): void {
@@ -501,6 +507,7 @@ export class Room {
     p.money -= w.price;
     const slot: WeaponSlot = { id: w.id, ammo: w.magazine, reserve: w.reserve };
     if (w.cls === 'pistol') {
+      if (p.secondary) this.dropWeapon(p, p.secondary); // replace = drop old
       p.secondary = slot;
       p.activeSlot = 2;
     } else {
