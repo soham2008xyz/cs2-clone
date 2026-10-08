@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { INTERP_DELAY_TICKS, LagCompensator } from '../src/lagcomp.js';
+import { INTERP_DELAY_TICKS, LagCompensator, MAX_REWIND_TICKS } from '../src/lagcomp.js';
 
 /** Player whose x position equals the tick it was recorded at — easy to assert. */
 const movingPlayer = (id: number, tick: number, alive = true) => ({ id, pos: { x: tick, y: 0 }, alive });
@@ -21,11 +21,9 @@ describe('LagCompensator.rewind', () => {
     expect(rewound?.get(1)?.x).toBe(50 - INTERP_DELAY_TICKS);
   });
 
-  it('clamps to the oldest recorded frame for very stale clients', () => {
-    const comp = recordedComp(100, 160); // ring buffer holds 1s; oldest = 101 after shift
-    const rewound = comp.rewind(2, 160);
-    const oldestKept = 160 - 60 + 1;
-    expect(rewound?.get(1)?.x).toBe(oldestKept);
+  it('clamps to the oldest recorded frame when history is shorter than the cap', () => {
+    const comp = recordedComp(100, 104);
+    expect(comp.rewind(2, 104)?.get(1)?.x).toBe(100);
   });
 
   it('never rewinds past the current tick', () => {
