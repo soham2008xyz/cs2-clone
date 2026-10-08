@@ -24,7 +24,8 @@ const PACKS = [
   },
 ];
 
-for (const pack of PACKS) {
+/** Download (if missing) and extract (if missing) one pack. Packs are independent, so they run in parallel. */
+async function preparePack(pack) {
   const zipPath = join(tmp, `${pack.name}.zip`);
   const extractDir = join(tmp, pack.name);
   if (!existsSync(zipPath)) {
@@ -34,10 +35,13 @@ for (const pack of PACKS) {
     writeFileSync(zipPath, Buffer.from(await res.arrayBuffer()));
   }
   if (!existsSync(extractDir)) {
-    execFileSync('unzip', ['-oq', zipPath, '-d', extractDir]);
+    // unzip is intentionally resolved from the developer's own PATH (developer-run script)
+    execFileSync('unzip', ['-oq', zipPath, '-d', extractDir]); // NOSONAR
   }
   console.log(`${pack.name} ready`);
 }
+
+await Promise.all(PACKS.map(preparePack));
 
 // ── copy the subset we use, with stable flat names ──
 const picks = [

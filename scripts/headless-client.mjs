@@ -48,7 +48,8 @@ ws.on('open', () => {
 });
 
 ws.on('message', (raw) => {
-  const msg = JSON.parse(raw.toString());
+  const text = (Array.isArray(raw) ? Buffer.concat(raw) : Buffer.from(raw)).toString('utf8'); // Buffer | ArrayBuffer | Buffer[]
+  const msg = JSON.parse(text);
   if (msg.t === 'welcome') console.log(`[${name}] id=${msg.id} map=${msg.map}`);
 });
 ws.on('error', (e) => {
