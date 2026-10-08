@@ -7,8 +7,9 @@ import { listMaps, parseClientMsg, type ClientMsg } from '@cs2d/shared';
 import { createRoomResponse } from './createRoom.js';
 import { ConnectionLimiter } from './connectionLimits.js';
 import { KeyedRateLimiter } from './rateLimit.js';
-import { DEFAULT_MAX_ROOMS, RoomManager } from './roomManager.js';
-import { clientIp, envInt, parseRequestUrl, rawDataToString, resolveStaticFile, validDifficulty } from './serverUtils.js';
+import { loadLimitsConfig } from './limitsConfig.js';
+import { RoomManager } from './roomManager.js';
+import { clientIp, parseRequestUrl, rawDataToString, resolveStaticFile, validDifficulty } from './serverUtils.js';
 
 const PORT = Number(process.env.PORT ?? 8090);
 // CS2D_FAST=1 shrinks round timings for integration tests
@@ -17,14 +18,10 @@ const REAP_INTERVAL_MS = 30000;
 const MAX_WS_BYTES = 16 * 1024; // largest valid client message is ~1 KB of chat; ws closes the socket on anything bigger
 const MAX_BODY_BYTES = 16 * 1024; // POST /rooms bodies are tiny; reject anything larger
 
-const MAX_ROOMS = envInt(process.env, 'CS2D_MAX_ROOMS', DEFAULT_MAX_ROOMS);
-const CREATE_BURST = envInt(process.env, 'CS2D_CREATE_BURST', 10); // rooms one IP can create back to back
-const CREATE_PER_MIN = envInt(process.env, 'CS2D_CREATE_PER_MIN', 6); // sustained rooms per minute per IP
-// Render terminates TLS at its proxy, which appends the peer address to x-forwarded-for. Elsewhere the header is forgeable, so ignore it.
-const TRUSTED_PROXY_HOPS = envInt(process.env, 'CS2D_TRUSTED_PROXY_HOPS', process.env.RENDER ? 1 : 0);
+const limits = loadLimitsConfig(process.env);
 
-const manager = new RoomManager(MAX_ROOMS);
-const createLimiter = new KeyedRateLimiter(CREATE_BURST, CREATE_PER_MIN / 60);
+const manager = new RoomManager(limits.maxRooms);
+const createLimiter = new KeyedRateLimiter(limits.createBurst, limits.createPerMin / 60);
 setInterval(() => {
   manager.reap();
   createLimiter.prune();
@@ -110,7 +107,7 @@ const http = createServer(async (req, res) => {
 
   if (url.pathname === '/rooms' && req.method === 'POST') {
     const result = await createRoomResponse({
-      ip: clientIp(req, TRUSTED_PROXY_HOPS),
+      ip: clientIp(req, limits.trustedProxyHops),
       manager,
       limiter: createLimiter,
       timings: FAST_TIMINGS,
