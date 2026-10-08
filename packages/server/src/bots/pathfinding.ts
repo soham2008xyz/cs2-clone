@@ -31,19 +31,65 @@ const MAX_ITERATIONS = 20000;
 
 export type BlockedFn = (tx: number, ty: number) => boolean;
 
-/** Pop the open node with the lowest f score (linear scan — open sets stay small on these maps). */
-function popLowest(open: Set<number>, nodes: Map<number, NodeRec>): number {
-  let curKey = -1;
-  let bestF = Infinity;
-  for (const k of open) {
-    const f = nodes.get(k)!.f;
-    if (f < bestF) {
-      bestF = f;
-      curKey = k;
-    }
+interface HeapEntry {
+  key: number;
+  f: number;
+  seq: number;
+}
+
+/** Binary min-heap on (f, seq). Stale entries are skipped by the caller (lazy deletion). */
+class OpenHeap {
+  private items: HeapEntry[] = [];
+  private seq = 0;
+
+  get size(): number {
+    return this.items.length;
   }
-  open.delete(curKey);
-  return curKey;
+
+  push(key: number, f: number): void {
+    const items = this.items;
+    const e: HeapEntry = { key, f, seq: this.seq++ };
+    let i = items.length;
+    items.push(e);
+    while (i > 0) {
+      const parent = (i - 1) >> 1;
+      if (!OpenHeap.less(e, items[parent])) break;
+      items[i] = items[parent];
+      i = parent;
+    }
+    items[i] = e;
+  }
+
+  pop(): HeapEntry | undefined {
+    const items = this.items;
+    const top = items[0];
+    const last = items.pop();
+    if (last === undefined || items.length === 0) return top;
+    let i = 0;
+    const n = items.length;
+    for (;;) {
+      let child = 2 * i + 1;
+      if (child >= n) break;
+      if (child + 1 < n && OpenHeap.less(items[child + 1], items[child])) child++;
+      if (!OpenHeap.less(items[child], last)) break;
+      items[i] = items[child];
+      i = child;
+    }
+    items[i] = last;
+    return top;
+  }
+
+  private static less(a: HeapEntry, b: HeapEntry): boolean {
+    return a.f < b.f || (a.f === b.f && a.seq < b.seq);
+  }
+}
+
+/** Pop the open node with the lowest f score, skipping stale heap entries. Returns -1 when empty. */
+function popLowest(open: OpenHeap, nodes: Map<number, NodeRec>, closed: Set<number>): number {
+  for (let e = open.pop(); e !== undefined; e = open.pop()) {
+    if (!closed.has(e.key) && nodes.get(e.key)!.f === e.f) return e.key;
+  }
+  return -1;
 }
 
 /** Diagonal moves may not squeeze between two orthogonally adjacent blocked tiles. */
@@ -53,7 +99,7 @@ function cutsCorner(blocked: BlockedFn, cur: NodeRec, dx: number, dy: number): b
 
 interface SearchState {
   nodes: Map<number, NodeRec>;
-  open: Set<number>;
+  open: OpenHeap;
   closed: Set<number>;
   blocked: BlockedFn;
   gtx: number;
@@ -74,7 +120,7 @@ function expandNeighbors(state: SearchState, cur: NodeRec, curKey: number): void
     const existing = nodes.get(nk);
     if (!existing || tentativeG < existing.g) {
       nodes.set(nk, { tx: ntx, ty: nty, g: tentativeG, f: tentativeG + octile(ntx, nty, gtx, gty), parent: curKey });
-      open.add(nk);
+      open.push(nk, nodes.get(nk)!.f);
     }
   }
 }
@@ -110,10 +156,13 @@ export function findPath(map: CompiledMap, startPx: Vec2, goalPx: Vec2, isBlocke
   const startKey = nodeKey(stx, sty);
   nodes.set(startKey, { tx: stx, ty: sty, g: 0, f: octile(stx, sty, gtx, gty), parent: null });
 
-  const state: SearchState = { nodes, open: new Set<number>([startKey]), closed: new Set<number>(), blocked, gtx, gty };
+  const state: SearchState = { nodes, open: new OpenHeap(), closed: new Set<number>(), blocked, gtx, gty };
+
+  state.open.push(startKey, nodes.get(startKey)!.f);
 
   for (let iter = 0; iter < MAX_ITERATIONS && state.open.size > 0; iter++) {
-    const curKey = popLowest(state.open, nodes);
+    const curKey = popLowest(state.open, nodes, state.closed);
+    if (curKey === -1) break;
     const cur = nodes.get(curKey)!;
     state.closed.add(curKey);
 

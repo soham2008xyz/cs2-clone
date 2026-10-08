@@ -10,8 +10,7 @@ export interface Occluder {
 const VISION_RAYS = 240;
 export const VISION_RANGE = 900;
 
-function rayDistance(origin: Vec2, angle: number, map: CompiledMap, smokes: readonly Occluder[], maxDist: number): number {
-  const d = fromAngle(angle);
+function rayDistanceDir(origin: Vec2, d: Vec2, map: CompiledMap, smokes: readonly Occluder[], maxDist: number): number {
   let t = raycastGrid(origin, d, maxDist, TILE_SIZE, map.isSolid);
   for (const s of smokes) {
     const st = rayCircle(origin, d, s.pos, s.radius);
@@ -20,22 +19,37 @@ function rayDistance(origin: Vec2, angle: number, map: CompiledMap, smokes: read
   return t;
 }
 
+function rayDistance(origin: Vec2, angle: number, map: CompiledMap, smokes: readonly Occluder[], maxDist: number): number {
+  return rayDistanceDir(origin, fromAngle(angle), map, smokes, maxDist);
+}
+
 /**
  * Visibility polygon by uniform ray fan. Smoke circles occlude like walls.
- * Returns a closed point list around the origin (world px).
+ * Returns a closed point list around the origin (world px). Pass `out` to
+ * reuse a previous result's array and points instead of allocating.
  */
 export function visibilityPolygon(
   origin: Vec2,
   map: CompiledMap,
   smokes: readonly Occluder[] = [],
   maxDist: number = VISION_RANGE,
+  out?: Vec2[],
 ): Vec2[] {
-  const pts: Vec2[] = [];
+  const pts = out ?? [];
+  pts.length = VISION_RAYS;
   for (let i = 0; i < VISION_RAYS; i++) {
     const a = (i / VISION_RAYS) * Math.PI * 2;
-    const t = rayDistance(origin, a, map, smokes, maxDist);
     const d = fromAngle(a);
-    pts.push({ x: origin.x + d.x * t, y: origin.y + d.y * t });
+    const t = rayDistanceDir(origin, d, map, smokes, maxDist);
+    const x = origin.x + d.x * t;
+    const y = origin.y + d.y * t;
+    const pt = pts[i];
+    if (pt) {
+      pt.x = x;
+      pt.y = y;
+    } else {
+      pts[i] = { x, y };
+    }
   }
   return pts;
 }

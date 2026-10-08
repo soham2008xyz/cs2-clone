@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compileMap, MapBuilder, TILE_SIZE } from '@cs2d/shared';
+import { compileMap, getMap, MapBuilder, TILE_SIZE } from '@cs2d/shared';
 import { findPath, smoothPath } from '../src/bots/pathfinding.js';
 
 function room() {
@@ -79,5 +79,19 @@ describe('smoothPath', () => {
     const smoothed = smoothPath(map, at(2, 2), raw);
     expect(smoothed.length).toBeGreaterThan(1); // can't shortcut through the wall
     for (const p of smoothed) expect(map.isSolidAt(p.x, p.y)).toBe(false);
+  });
+});
+
+describe('findPath on Dust II', () => {
+  it('resolves a long path between the spawns', () => {
+    const map = getMap('dust2');
+    const t = map.spawns.T[0];
+    const ct = map.spawns.CT[0];
+    const path = findPath(map, t, ct);
+    expect(path.length).toBeGreaterThan(20);
+    const last = path[path.length - 1];
+    expect(Math.floor(last.x / TILE_SIZE)).toBe(Math.floor(ct.x / TILE_SIZE));
+    expect(Math.floor(last.y / TILE_SIZE)).toBe(Math.floor(ct.y / TILE_SIZE));
+    for (const p of path) expect(map.isSolid(Math.floor(p.x / TILE_SIZE), Math.floor(p.y / TILE_SIZE))).toBe(false);
   });
 });
