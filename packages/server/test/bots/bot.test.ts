@@ -45,13 +45,14 @@ function botTestMap(): string {
   return def.name;
 }
 
-/** Like botTestMap, but the T spawn sits mid-corridor with site A behind it (left). */
+/** Like botTestMap, but the T spawn sits mid-corridor with site A behind it (left), and a partial wall at x=31. */
 function midSpawnMap(): string {
   const b = new MapBuilder(64, 8);
   b.carve(1, 1, 62, 6);
   b.site('A', 5, 3, 3, 3);
+  b.wall(31, 1, 1, 4); // two-row gap along the bottom; separates x=30 from x=32 by a wall
   b.spawn('T', 20, 4);
-  b.spawn('CT', 61, 4);
+  b.spawn('CT', 62, 4);
   const def = b.build('bot-mid-spawn-arena', 'Bot Mid Spawn Arena');
   registerMap(def);
   return def.name;
@@ -153,7 +154,7 @@ describe('BotController (structural smoke tests)', () => {
     stepUntil(room, () => room.phase === 'live');
 
     // bomb planted away from site A, on the far side of the bot from it
-    const bombPos: Vec2 = { x: 30 * TILE_SIZE, y: 4 * TILE_SIZE };
+    const bombPos: Vec2 = { x: 30 * TILE_SIZE, y: 4.5 * TILE_SIZE };
     bombGuts(room).bomb = { mode: 'planted', pos: bombPos, carrierId: 0, explodeTick: room.tick + 100000 };
     (room as unknown as { phase: string }).phase = 'planted';
 
@@ -168,7 +169,7 @@ describe('BotController (structural smoke tests)', () => {
     room.addPlayer(null, 'Human', 'CT');
     stepUntil(room, () => room.phase === 'live');
 
-    const bombPos: Vec2 = { x: 30 * TILE_SIZE, y: 4 * TILE_SIZE };
+    const bombPos: Vec2 = { x: 30 * TILE_SIZE, y: 4.5 * TILE_SIZE };
     bot.pos = { x: bombPos.x - TILE_SIZE, y: bombPos.y };
     bombGuts(room).bomb = { mode: 'planted', pos: bombPos, carrierId: 0, explodeTick: room.tick + 100000 };
     (room as unknown as { phase: string }).phase = 'planted';
@@ -176,5 +177,41 @@ describe('BotController (structural smoke tests)', () => {
     const before = { ...bot.pos };
     step(room, 60);
     expect(dist(bot.pos, before)).toBeLessThan(TILE_SIZE / 2);
+  });
+
+  it('post-plant, a T bot walled off from the nearby bomb keeps the bomb as its goal', () => {
+    const room = new Room(midSpawnMap(), FAST);
+    const bot = room.addBot('T', 'normal');
+    room.addPlayer(null, 'Human', 'CT');
+    stepUntil(room, () => room.phase === 'live');
+
+    const bombPos: Vec2 = { x: 30.5 * TILE_SIZE, y: 4.5 * TILE_SIZE };
+    bot.pos = { x: 33.5 * TILE_SIZE, y: 4.5 * TILE_SIZE }; // ~3 tiles away (inside the hold radius), wall between
+    bombGuts(room).bomb = { mode: 'planted', pos: bombPos, carrierId: 0, explodeTick: room.tick + 100000 };
+    (room as unknown as { phase: string }).phase = 'planted';
+
+    step(room, 10);
+    // not holding: the bot's path goal is the bomb, not "no goal" (the detour hugs a wall
+    // corner in this tiny map, so assert the goal rather than distance walked)
+    const ctl = (room as unknown as { bots: Map<number, { goal: Vec2 | null }> }).bots.get(bot.id);
+    expect(ctl?.goal).toEqual(bombPos);
+  });
+
+  it('post-plant, a T bot holding near the bomb moves out of a fire on its tile', () => {
+    const room = new Room(midSpawnMap(), FAST);
+    const bot = room.addBot('T', 'normal');
+    room.addPlayer(null, 'Human', 'CT');
+    stepUntil(room, () => room.phase === 'live');
+
+    const bombPos: Vec2 = { x: 30 * TILE_SIZE, y: 4.5 * TILE_SIZE };
+    bot.pos = { x: bombPos.x - TILE_SIZE, y: bombPos.y };
+    bombGuts(room).bomb = { mode: 'planted', pos: bombPos, carrierId: 0, explodeTick: room.tick + 100000 };
+    (room as unknown as { phase: string }).phase = 'planted';
+    const fires = (room as unknown as { fires: Map<number, unknown> }).fires;
+    fires.set(301, { id: 301, kind: 'molotov', pos: { ...bot.pos }, untilTick: room.tick + 600, ownerId: 0, ownerTeam: 'CT' });
+
+    const before = { ...bot.pos };
+    step(room, 60);
+    expect(dist(bot.pos, before)).toBeGreaterThan(TILE_SIZE / 2);
   });
 });
