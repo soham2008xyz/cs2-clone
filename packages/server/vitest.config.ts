@@ -2,14 +2,6 @@ import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
-  server: {
-    port: 5173,
-    strictPort: true,
-  },
-  build: {
-    outDir: 'dist',
-    chunkSizeWarningLimit: 2000,
-  },
   test: {
     coverage: {
       provider: 'v8',
