@@ -890,3 +890,19 @@ describe('input rate limiting', () => {
     expect(p.buttons).toBe(BTN.RIGHT);
   });
 });
+
+describe('input rate limiting: no banked credit', () => {
+  it('does not carry a movement burst out of freeze time', () => {
+    const room = new Room('testarena', FAST);
+    const p = room.addPlayer(null, 'T1', 'T');
+    room.addPlayer(null, 'CT1', 'CT');
+    stepUntil(room, () => room.phase === 'freeze');
+    step(room, 2); // idle through freeze, credit must stay empty
+    stepUntil(room, () => room.phase === 'live');
+    const start = { ...p.pos };
+    for (let i = 0; i < 15; i++) room.handleInput(p.id, { t: 'i', s: i + 1, b: BTN.RIGHT, a: 0 });
+    step(room, 1);
+    // at most ~2 steps (one earned this tick), not 15
+    expect(Math.abs(p.pos.x - start.x)).toBeLessThan(10);
+  });
+});

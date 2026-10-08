@@ -1166,7 +1166,8 @@ export class Room {
 
     const queue = p.inputQueue;
     p.inputQueue = [];
-    p.moveCredit = Math.min(MAX_MOVE_CREDIT, p.moveCredit + 1);
+    // No banking while movement is off (freeze, dead), or a client could stockpile a burst for the thaw.
+    p.moveCredit = canMove && p.alive ? Math.min(MAX_MOVE_CREDIT, p.moveCredit + 1) : 0;
     for (const input of queue) {
       // Out of credit: aim, buttons and acks still apply, but the input moves nobody.
       const mayMove = p.moveCredit >= 1;
