@@ -25,7 +25,7 @@ interface RoomInternals {
   fires: Map<number, { id: number; kind: string; pos: { x: number; y: number }; untilTick: number; ownerId: number; ownerTeam: TeamId }>;
   activeNades: Map<number, NadeLike>;
   smokes: Map<number, unknown>;
-  groundItems: Map<number, { weaponId: string }>;
+  groundItems: Map<number, { weaponId: string; pos: { x: number; y: number }; ammo: number; reserve: number; blockedFor: number }>;
   bomb: { mode: string; pos: { x: number; y: number }; carrierId: number; explodeTick: number };
   phaseEndTick: number;
   roundNumber: number;
@@ -290,7 +290,7 @@ describe('gameplay features', () => {
     expect(helmeted.hp).toBeGreaterThan(bare.hp);
   });
 
-  it('G drops the held gun; E picks up primaries and pistols', () => {
+  it('G drops the held gun; a teammate standing there picks up primaries and pistols', () => {
     const { room, send } = liveRoom();
     const a = room.addPlayer(null, 'A', 'T');
     const b = room.addPlayer(null, 'B', 'T');
@@ -305,23 +305,88 @@ describe('gameplay features', () => {
     step(room, 1);
     expect(a.primary).toBeNull();
     expect(a.activeSlot).toBe(2); // falls back to the pistol
-    expect([...guts(room).groundItems.values()][0]?.weaponId).toBe('ak47');
-
-    send(b.id, BTN.USE);
-    step(room, 1);
-    expect(b.primary?.id).toBe('ak47');
+    expect(b.primary?.id).toBe('ak47'); // walk-over pickup, no USE needed
 
     send(a.id, 0); // release G so the next press is a fresh edge
     step(room, 1);
+    b.secondary = null;
     send(a.id, BTN.DROP); // now drop the pistol — knife remains
     step(room, 1);
     expect(a.secondary).toBeNull();
     expect(a.activeSlot).toBe(3);
-
-    b.secondary = null;
-    send(b.id, BTN.USE);
-    step(room, 1);
     expect(b.secondary?.id).toBe('glock'); // pistols are picked up too
+  });
+
+  it('walking over a dropped gun picks it up without USE', () => {
+    const { room, send } = liveRoom();
+    const a = room.addPlayer(null, 'A', 'T');
+    const b = room.addPlayer(null, 'B', 'T');
+    room.addPlayer(null, 'CT1', 'CT');
+    stepUntil(room, () => room.phase === 'live');
+
+    a.primary = { id: 'ak47', ammo: 30, reserve: 90 };
+    a.activeSlot = 1;
+    send(a.id, BTN.DROP);
+    step(room, 1);
+    expect(guts(room).groundItems.size).toBe(1);
+
+    b.pos = { x: a.pos.x + PICKUP_RADIUS + 5, y: a.pos.y };
+    step(room, 1);
+    expect(b.primary).toBeNull(); // out of reach
+
+    b.pos = { ...a.pos };
+    step(room, 1);
+    expect(b.primary?.id).toBe('ak47');
+    expect(b.activeSlot).toBe(1);
+    expect(guts(room).groundItems.size).toBe(0);
+  });
+
+  it('walk-over pickup skips a gun whose slot is already filled', () => {
+    const { room } = liveRoom();
+    const b = room.addPlayer(null, 'B', 'T');
+    room.addPlayer(null, 'CT1', 'CT');
+    stepUntil(room, () => room.phase === 'live');
+
+    b.primary = { id: 'm4a1', ammo: 30, reserve: 90 };
+    guts(room).groundItems.set(500, { weaponId: 'ak47', pos: { ...b.pos }, ammo: 30, reserve: 90, blockedFor: 0 });
+    step(room, 1);
+    expect(b.primary?.id).toBe('m4a1');
+    expect(guts(room).groundItems.size).toBe(1);
+  });
+
+  it('the dropper does not auto-regrab their own drop until they step away', () => {
+    const { room, send } = liveRoom();
+    const a = room.addPlayer(null, 'A', 'T');
+    room.addPlayer(null, 'CT1', 'CT');
+    stepUntil(room, () => room.phase === 'live');
+
+    a.primary = { id: 'ak47', ammo: 30, reserve: 90 };
+    a.activeSlot = 1;
+    send(a.id, BTN.DROP);
+    step(room, 5);
+    expect(a.primary).toBeNull(); // standing on it doesn't re-pick
+
+    const dropPos = { ...a.pos };
+    a.pos = { x: dropPos.x + PICKUP_RADIUS + 5, y: dropPos.y };
+    step(room, 1);
+    a.pos = dropPos; // walk back over it
+    step(room, 1);
+    expect(a.primary?.id).toBe('ak47');
+  });
+
+  it('the dropper can still grab their own drop immediately with USE', () => {
+    const { room, send } = liveRoom();
+    const a = room.addPlayer(null, 'A', 'T');
+    room.addPlayer(null, 'CT1', 'CT');
+    stepUntil(room, () => room.phase === 'live');
+
+    a.primary = { id: 'ak47', ammo: 30, reserve: 90 };
+    a.activeSlot = 1;
+    send(a.id, BTN.DROP);
+    step(room, 1);
+    send(a.id, BTN.USE);
+    step(room, 1);
+    expect(a.primary?.id).toBe('ak47');
   });
 
   it('pressing 4 while holding a grenade cycles the carried nades', () => {
