@@ -69,7 +69,7 @@ function liveRoom(): { room: Room; send: ReturnType<typeof feeder> } {
 }
 
 const plantBomb = (room: Room, send: ReturnType<typeof feeder>, t: PlayerConn): void => {
-  t.pos = { ...room.map.siteCenters.A };
+  t.pos = { ...room.map.siteCenters.A! };
   stepUntil(
     room,
     () => {
@@ -314,7 +314,7 @@ describe('gameplay features', () => {
     step(room, 1);
     expect(a.secondary).toBeNull();
     expect(a.activeSlot).toBe(3);
-    expect(b.secondary?.id).toBe('glock'); // pistols are picked up too
+    expect((b as PlayerConn).secondary?.id).toBe('glock'); // pistols are picked up too
   });
 
   it('walking over a dropped gun picks it up without USE', () => {
@@ -425,7 +425,7 @@ describe('gameplay features', () => {
     stepUntil(room, () => room.phase === 'freeze' && guts(room).roundNumber === 2);
 
     expect(a.primary?.id).toBe('ak47'); // rifle survives the round
-    expect(a.secondary?.id).toBe('glock'); // missing pistol restocked
+    expect((a as PlayerConn).secondary?.id).toBe('glock'); // missing pistol restocked
     expect(a.activeSlot).toBe(1);
   });
 
@@ -544,7 +544,7 @@ describe('plant/defuse interruption', () => {
     room.addPlayer(null, 'CT1', 'CT');
     stepUntil(room, () => room.phase === 'live');
 
-    t.pos = { ...room.map.siteCenters.A };
+    t.pos = { ...room.map.siteCenters.A! };
     send(t.id, BTN.USE);
     step(room, 1);
     expect(t.actionStartTick).toBeGreaterThan(0);

@@ -97,7 +97,7 @@ function roster(...entries: Array<[number, string, TeamId]>): RosterEntry[] {
   return entries.map(([id, name, team]) => ({ id, name, team, k: 0, d: 0 }));
 }
 
-function remote(x: number, y: number, flags = ALIVE): RemoteState {
+function remote(x: number, y: number, flags: number = ALIVE): RemoteState {
   return { x, y, aim: 0, hp: 100, flags };
 }
 
@@ -158,7 +158,7 @@ describe('GameScene.update — input', () => {
   });
 
   it('drops ATTACK while the buy menu is open but keeps movement', () => {
-    g.game.events.on('buy:toggle', (g as unknown as { onBuyToggle: (o: boolean) => void }).onBuyToggle, g);
+    g.game.events.on('buy:toggle', (g as unknown as { onBuyToggle: (...a: unknown[]) => void }).onBuyToggle, g);
     g.game.events.emit('buy:toggle', true);
     g.keys.W.isDown = true;
     g.input.activePointer.isDown = true;
@@ -167,7 +167,7 @@ describe('GameScene.update — input', () => {
   });
 
   it('keeps a click held across the menu closing from firing until released', () => {
-    g.game.events.on('buy:toggle', (g as unknown as { onBuyToggle: (o: boolean) => void }).onBuyToggle, g);
+    g.game.events.on('buy:toggle', (g as unknown as { onBuyToggle: (...a: unknown[]) => void }).onBuyToggle, g);
     g.game.events.emit('buy:toggle', true);
     g.input.activePointer.isDown = true;
     g.game.events.emit('buy:toggle', false);
