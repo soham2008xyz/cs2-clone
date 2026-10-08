@@ -3,7 +3,7 @@ import { createServer, type ServerResponse } from 'node:http';
 import { extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { decode, listMaps, type ClientMsg } from '@cs2d/shared';
+import { listMaps, parseClientMsg, type ClientMsg } from '@cs2d/shared';
 import { RoomManager } from './roomManager.js';
 import { parseRequestUrl, rawDataToString, resolveStaticFile, validDifficulty } from './serverUtils.js';
 
@@ -125,13 +125,13 @@ wss.on('connection', (ws: WebSocket, req) => {
   let playerId: number | null = null;
   let playerTeam: import('@cs2d/shared').TeamId | null = null;
 
-  ws.on('message', (raw) => {
-    let msg: ClientMsg;
-    try {
-      msg = decode<ClientMsg>(rawDataToString(raw));
-    } catch {
-      return;
-    }
+  // A protocol-level error (bad frame, oversized payload) must close this socket, not crash the process.
+  ws.on('error', (err) => {
+    console.warn(`[room ${meta.code}] socket error: ${err.message}`);
+    ws.terminate();
+  });
+
+  const dispatch = (msg: ClientMsg): void => {
     if (msg.t === 'join' && playerId === null) {
       const p = room.addPlayer(ws, msg.name, msg.team);
       playerId = p.id;
@@ -155,6 +155,16 @@ wss.on('connection', (ws: WebSocket, req) => {
       room.broadcastChat(name, playerTeam, msg.text);
     } else if (msg.t === 'ping') {
       ws.send(JSON.stringify({ t: 'pong', t0: msg.t0 }));
+    }
+  };
+
+  ws.on('message', (raw) => {
+    const msg = parseClientMsg(rawDataToString(raw));
+    if (!msg) return; // drop malformed messages
+    try {
+      dispatch(msg);
+    } catch (err) {
+      console.error(`[room ${meta.code}] message handler failed:`, err);
     }
   });
 

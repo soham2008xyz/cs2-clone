@@ -176,3 +176,74 @@ export type ServerMsg = WelcomeMsg | RosterMsg | SnapshotMsg | ChatBroadcastMsg 
 
 export const encode = (msg: ClientMsg | ServerMsg): string => JSON.stringify(msg);
 export const decode = <T>(raw: string): T => JSON.parse(raw) as T;
+
+// ── Untrusted client input ───────────────────────────────────────────────────
+
+export const MAX_NAME_LEN = 64;
+export const MAX_CHAT_LEN = 1000;
+export const MAX_ITEM_LEN = 32;
+const BTN_MASK = Object.values(BTN).reduce((a, b) => a | b, 0);
+const DIFFICULTIES = ['easy', 'normal', 'hard'];
+
+const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+const isStr = (v: unknown, max: number): v is string => typeof v === 'string' && v.length <= max;
+const isTeam = (v: unknown): v is TeamId => v === 'T' || v === 'CT';
+
+/**
+ * Check a decoded value against the `ClientMsg` shape. Returns a copy holding
+ * only the known fields, or null when the type or range of any field is wrong.
+ */
+export function validateClientMsg(v: unknown): ClientMsg | null {
+  if (!isObj(v)) return null;
+  switch (v.t) {
+    case 'join':
+      if (!isStr(v.name, MAX_NAME_LEN) || (v.team !== undefined && !isTeam(v.team))) return null;
+      return v.team === undefined ? { t: 'join', name: v.name } : { t: 'join', name: v.name, team: v.team };
+    case 'i': {
+      if (!isNum(v.s) || !isNum(v.a)) return null;
+      if (!Number.isInteger(v.b) || (v.b as number) < 0 || ((v.b as number) & ~BTN_MASK) !== 0) return null;
+      const msg: InputMsg = { t: 'i', s: v.s, b: v.b as number, a: v.a };
+      if (v.w !== undefined) {
+        if (!Number.isInteger(v.w) || (v.w as number) < 1 || (v.w as number) > 4) return null;
+        msg.w = v.w as number;
+      }
+      if (v.k !== undefined) {
+        if (!isNum(v.k)) return null;
+        msg.k = v.k;
+      }
+      return msg;
+    }
+    case 'buy':
+      return isStr(v.item, MAX_ITEM_LEN) ? { t: 'buy', item: v.item } : null;
+    case 'bots': {
+      const msg: FillBotsMsg = { t: 'bots' };
+      if (v.perTeam !== undefined) {
+        if (!isNum(v.perTeam)) return null;
+        msg.perTeam = v.perTeam;
+      }
+      if (v.difficulty !== undefined) {
+        if (typeof v.difficulty !== 'string' || !DIFFICULTIES.includes(v.difficulty)) return null;
+        msg.difficulty = v.difficulty as FillBotsMsg['difficulty'];
+      }
+      return msg;
+    }
+    case 'team':
+      return isTeam(v.team) ? { t: 'team', team: v.team } : null;
+    case 'chat':
+      return isStr(v.text, MAX_CHAT_LEN) ? { t: 'chat', text: v.text } : null;
+    case 'ping':
+      return isNum(v.t0) ? { t: 'ping', t0: v.t0 } : null;
+    default:
+      return null;
+  }
+}
+
+/** Parse and validate a raw client frame. Returns null for bad JSON or a bad shape. */
+export function parseClientMsg(raw: string): ClientMsg | null {
+  try {
+    return validateClientMsg(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
