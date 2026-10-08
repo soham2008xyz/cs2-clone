@@ -23,6 +23,7 @@ import {
   type ZoneSnap,
 } from '@cs2d/shared';
 import { playerTexture } from './BootScene.js';
+import { nadeColor, teamChatColor } from './presentation.js';
 import { sfx } from '../audio/sfx.js';
 import { toggleMute, unlockAudio } from '../audio/synth.js';
 import { appendChatLine, initChat } from '../chat.js';
@@ -53,17 +54,6 @@ function weaponDisplayName(id: string): string {
   if (id === 'c4') return 'C4';
   return WEAPONS[id]?.name ?? GRENADES[id as GrenadeKind]?.name ?? id;
 }
-
-/** Chat line color for a sender's team (grey for spectators / system). */
-function teamChatColor(team: TeamId | null | undefined): string {
-  if (team === 'T') return '#ffd280';
-  if (team === 'CT') return '#9cc4ff';
-  return '#aaaaaa';
-}
-
-/** In-flight grenade dot color by kind (molotov / incendiary share the fallback). */
-const NADE_COLORS: Partial<Record<string, number>> = { flash: 0xdddddd, smoke: 0x999999, he: 0x556b2f };
-const FIRE_NADE_COLOR = 0x8b3a1a;
 
 export class GameScene extends Phaser.Scene {
   map!: CompiledMap;
@@ -652,7 +642,7 @@ export class GameScene extends Phaser.Scene {
       seenNades.add(nadeId);
       let s = this.nadeSprites.get(nadeId);
       if (!s) {
-        s = this.add.circle(x, y, 5, NADE_COLORS[kind] ?? FIRE_NADE_COLOR).setDepth(9).setStrokeStyle(1, 0x000000, 0.6);
+        s = this.add.circle(x, y, 5, nadeColor(kind)).setDepth(9).setStrokeStyle(1, 0x000000, 0.6);
         this.nadeSprites.set(nadeId, s);
       }
       s.setPosition(x, y);

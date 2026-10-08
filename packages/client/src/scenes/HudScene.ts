@@ -13,6 +13,7 @@ import {
   type SelfState,
   type TeamId,
 } from '@cs2d/shared';
+import { hpLabel, killfeedColor, weaponLines } from './presentation.js';
 
 interface KillEntry {
   text: Phaser.GameObjects.Text;
@@ -28,32 +29,6 @@ interface SelfPayload {
 }
 
 const MONO = 'monospace';
-
-/** Health readout, with armor (and a + for helmet) when worn; blank while dead. */
-function hpLabel(hp: number, alive: boolean, me: SelfState | null): string {
-  if (!alive) return '';
-  let armor = '';
-  if (me && me.armor > 0) {
-    const helmet = me.helm ? '+' : '';
-    armor = `  ⛨ ${me.armor}${helmet}`;
-  }
-  return `♥ ${Math.max(0, hp)}${armor}`;
-}
-
-/** Ammo line and weapon name for the held item: grenade, knife, reloading gun, or gun. */
-function weaponLines(me: SelfState): { ammo: string; weapon: string } {
-  if (me.slot === 4 && me.nades?.length) return { ammo: 'THROW', weapon: getGrenade(me.nades[0]).name.toUpperCase() };
-  if (me.weapon === 'knife') return { ammo: '—', weapon: me.weapon.toUpperCase() };
-  const weapon = me.weapon.toUpperCase() + (me.kit ? '  +KIT' : '');
-  if (me.reload > 0) return { ammo: 'RELOADING', weapon };
-  return { ammo: `${me.ammo} / ${me.reserve}`, weapon };
-}
-
-function killfeedColor(k: { meKiller: boolean; meVictim: boolean }): string {
-  if (k.meKiller) return '#ffd76b';
-  if (k.meVictim) return '#ff6b6b';
-  return '#dddddd';
-}
 
 /** Screen-fixed UI. Listens to game-level events emitted by GameScene. */
 export class HudScene extends Phaser.Scene {

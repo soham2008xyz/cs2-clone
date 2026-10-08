@@ -4,20 +4,14 @@ import { extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { decode, listMaps, type ClientMsg } from '@cs2d/shared';
-import type { BotDifficulty } from './bots/bot.js';
 import { RoomManager } from './roomManager.js';
-import { rawDataToString, resolveStaticFile } from './serverUtils.js';
+import { parseRequestUrl, rawDataToString, resolveStaticFile, validDifficulty } from './serverUtils.js';
 
 const PORT = Number(process.env.PORT ?? 8090);
 // CS2D_FAST=1 shrinks round timings for integration tests
 const FAST_TIMINGS = process.env.CS2D_FAST === '1' ? { freeze: 1, round: 20, bomb: 4, plant: 0.5, defuse: 1, defuseKit: 0.5, roundEnd: 1 } : {};
 const REAP_INTERVAL_MS = 30000;
-const BOT_DIFFICULTIES = new Set<unknown>(['easy', 'normal', 'hard'] satisfies BotDifficulty[]);
 const MAX_BODY_BYTES = 16 * 1024; // POST /rooms bodies are tiny; reject anything larger
-
-function validDifficulty(d: unknown): BotDifficulty {
-  return BOT_DIFFICULTIES.has(d) ? (d as BotDifficulty) : 'normal';
-}
 
 const manager = new RoomManager();
 setInterval(() => manager.reap(), REAP_INTERVAL_MS);
@@ -83,16 +77,6 @@ function serveClient(pathname: string, res: ServerResponse): void {
   const file = isFile ? candidate : join(CLIENT_DIST, 'index.html'); // SPA fallback
   res.writeHead(200, { 'content-type': MIME[extname(file)] ?? 'application/octet-stream' });
   createReadStream(file).pipe(res);
-}
-
-/** Parse a request target (path + query); the host is irrelevant, so use a fixed base. */
-function parseRequestUrl(raw: string | undefined): URL {
-  const base = 'http://localhost';
-  try {
-    return new URL(raw ?? '/', base);
-  } catch {
-    return new URL('/', base); // malformed absolute-form target: treat as root rather than crash
-  }
 }
 
 const http = createServer(async (req, res) => {
