@@ -93,6 +93,9 @@ export class GameScene extends Phaser.Scene {
   private spectateIndex = 0;
   private spectateTarget = -1;
   private chatOpen = false;
+  private buyOpen = false;
+  /** Set when the buy menu closes under a held click, so that click never turns into a shot. */
+  private attackLatched = false;
   private pingTimer?: Phaser.Time.TimerEvent;
   private listener = { x: 0, y: 0 }; // positional-audio ear (camera subject)
   private nextBeepAt = 0;
@@ -104,6 +107,8 @@ export class GameScene extends Phaser.Scene {
 
   create(): void {
     (window as unknown as { __scene: GameScene }).__scene = this; // debug/testing handle
+    this.buyOpen = false; // scene instances are reused on restart
+    this.attackLatched = false;
     this.map = getMap(session.map);
     this.predictor = new Predictor(this.map);
     renderMap(this, this.map);
@@ -153,10 +158,12 @@ export class GameScene extends Phaser.Scene {
     this.game.events.on('buy', this.onBuy, this);
     this.game.events.on('chat:send', this.onChatSend, this);
     this.game.events.on('chat:toggle', this.onChatToggle, this);
+    this.game.events.on('buy:toggle', this.onBuyToggle, this);
     this.events.once('shutdown', () => {
       this.game.events.off('buy', this.onBuy, this);
       this.game.events.off('chat:send', this.onChatSend, this);
       this.game.events.off('chat:toggle', this.onChatToggle, this);
+      this.game.events.off('buy:toggle', this.onBuyToggle, this);
       this.pingTimer?.destroy();
     });
 
@@ -260,6 +267,11 @@ export class GameScene extends Phaser.Scene {
 
   private onChatToggle(open: boolean): void {
     this.chatOpen = open;
+  }
+
+  private onBuyToggle(open: boolean): void {
+    this.buyOpen = open;
+    if (!open && this.input.activePointer.isDown) this.attackLatched = true;
   }
 
   private nameOf(id: number): string {
@@ -497,9 +509,12 @@ export class GameScene extends Phaser.Scene {
     this.drawTracers();
   }
 
-  /** Buttons currently held (nothing while typing in chat). */
+  /** Buttons currently held (nothing while typing in chat, no attack while buying). */
   private pollButtons(): number {
     if (this.chatOpen) return 0;
+    // clicks belong to the buy menu while it is open; a click held across its close stays muted
+    if (!this.input.activePointer.isDown) this.attackLatched = false;
+    const attack = this.input.activePointer.isDown && !this.buyOpen && !this.attackLatched;
     const held: Array<[boolean, number]> = [
       [this.keys.W.isDown, BTN.UP],
       [this.keys.S.isDown, BTN.DOWN],
@@ -509,7 +524,7 @@ export class GameScene extends Phaser.Scene {
       [this.keys.R.isDown, BTN.RELOAD],
       [this.keys.E.isDown, BTN.USE],
       [this.keys.G.isDown, BTN.DROP],
-      [this.input.activePointer.isDown, BTN.ATTACK],
+      [attack, BTN.ATTACK],
     ];
     let buttons = 0;
     for (const [down, bit] of held) if (down) buttons |= bit;
