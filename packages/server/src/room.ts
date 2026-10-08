@@ -501,6 +501,7 @@ export class Room {
     p.money -= w.price;
     const slot: WeaponSlot = { id: w.id, ammo: w.magazine, reserve: w.reserve };
     if (w.cls === 'pistol') {
+      if (p.secondary) this.dropWeapon(p, p.secondary); // replace = drop old
       p.secondary = slot;
       p.activeSlot = 2;
     } else {
