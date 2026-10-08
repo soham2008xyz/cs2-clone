@@ -13,8 +13,8 @@ export class TokenBucket {
   }
 
   private refill(now: number): void {
-    const elapsed = Math.max(0, now - this.last) / 1000;
-    this.tokens = Math.min(this.capacity, this.tokens + elapsed * this.refillPerSec);
+    if (now <= this.last) return; // clock stepped back: keep the later stamp so a correction cannot refill tokens
+    this.tokens = Math.min(this.capacity, this.tokens + ((now - this.last) / 1000) * this.refillPerSec);
     this.last = now;
   }
 

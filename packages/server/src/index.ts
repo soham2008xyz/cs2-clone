@@ -178,13 +178,12 @@ wss.on('connection', (ws: WebSocket, req) => {
 
   ws.on('message', (raw) => {
     const msg = parseClientMsg(rawDataToString(raw));
-    if (!msg) return; // drop malformed messages
-    const verdict = limiter.check(msg, Date.now());
+    const verdict = limiter.check(msg, Date.now()); // malformed frames count too
     if (verdict === 'kick') {
       ws.close(1008, 'rate limit exceeded');
       return;
     }
-    if (verdict === 'drop') return;
+    if (verdict === 'drop' || !msg) return; // drop over-budget and malformed messages
     try {
       dispatch(msg);
     } catch (err) {

@@ -24,6 +24,14 @@ describe('TokenBucket', () => {
     expect(b.take(0)).toBe(false);
   });
 
+  it('does not refill extra when the clock steps back and then corrects', () => {
+    const b = new TokenBucket(1, 1, 10000);
+    expect(b.take(10000)).toBe(true);
+    expect(b.take(0)).toBe(false); // clock jumped back
+    expect(b.take(10000)).toBe(false); // corrected: no real time has passed
+    expect(b.take(11000)).toBe(true);
+  });
+
   it('reports the wait until the next token', () => {
     const b = new TokenBucket(1, 2, 0);
     b.take(0);

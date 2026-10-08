@@ -52,8 +52,10 @@ export class ConnectionLimiter {
   }
 
   /** 'drop' discards the message; 'kick' means the peer is flooding and should be disconnected. */
-  check(msg: ClientMsg, now: number): LimitVerdict {
-    if (this.buckets[classOf(msg)].take(now)) return 'ok';
+  check(msg: ClientMsg | null, now: number): LimitVerdict {
+    // frames that fail to parse cost decode + parse time, so they draw from the 'other' budget
+    const cls = msg ? classOf(msg) : 'other';
+    if (this.buckets[cls].take(now)) return 'ok';
     if (now - this.windowStart > DROP_WINDOW_MS) {
       this.windowStart = now;
       this.drops = 0;

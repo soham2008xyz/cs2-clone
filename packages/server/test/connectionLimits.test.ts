@@ -41,6 +41,14 @@ describe('ConnectionLimiter', () => {
     expect(l.check(chat, 0)).toBe('ok');
   });
 
+  it('charges unparseable frames to the other-message budget and kicks a garbage flood', () => {
+    const l = new ConnectionLimiter(0, 50);
+    const verdicts = Array.from({ length: 200 }, () => l.check(null, 0));
+    expect(verdicts.filter((v) => v === 'ok')).toHaveLength(MESSAGE_LIMITS.other.burst);
+    expect(verdicts).toContain('kick');
+    expect(l.check(input(1), 0)).toBe('ok'); // inputs keep their own budget
+  });
+
   it('kicks a connection that keeps flooding, but not one that briefly overshoots', () => {
     const brief = new ConnectionLimiter(0, 50);
     for (let i = 0; i < 60 + 10; i++) brief.check(input(i), 0);
