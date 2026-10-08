@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { WebSocket } from 'ws';
-import { RoomManager } from '../src/roomManager.js';
+import { RoomCapError, RoomManager } from '../src/roomManager.js';
 
 describe('RoomManager', () => {
   const manager = new RoomManager();
@@ -68,5 +68,38 @@ describe('RoomManager', () => {
     vi.spyOn(Date, 'now').mockReturnValue(realNow + 61_000);
     manager.reap();
     expect(manager.get(meta.code)).toBeDefined();
+  });
+
+  describe('room cap', () => {
+    it('refuses to create rooms past the cap', () => {
+      const capped = new RoomManager(2);
+      const a = capped.create('testarena', false);
+      const b = capped.create('testarena', false);
+      expect(() => capped.create('testarena', false)).toThrow(RoomCapError);
+      expect(capped.size).toBe(2);
+      capped.get(a.code)?.room.stop();
+      capped.get(b.code)?.room.stop();
+    });
+
+    it('frees a slot once an abandoned room is reaped', () => {
+      vi.useFakeTimers();
+      const capped = new RoomManager(1);
+      capped.create('testarena', false);
+      expect(() => capped.create('testarena', false)).toThrow(RoomCapError); // still inside the grace window
+      vi.advanceTimersByTime(61000);
+      const meta = capped.create('testarena', false); // create() reaps first
+      expect(capped.size).toBe(1);
+      capped.get(meta.code)?.room.stop();
+      vi.useRealTimers();
+    });
+  });
+
+  it('list() flags full rooms', () => {
+    const meta = create();
+    const { room } = manager.get(meta.code)!;
+    for (let i = 0; i < 9; i++) room.addPlayer(null, `P${i}`);
+    expect(manager.list().find((r) => r.code === meta.code)?.full).toBe(false);
+    room.addPlayer(null, 'last');
+    expect(manager.list().find((r) => r.code === meta.code)).toMatchObject({ players: 10, full: true });
   });
 });

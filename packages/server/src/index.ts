@@ -4,8 +4,12 @@ import { extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { listMaps, parseClientMsg, type ClientMsg } from '@cs2d/shared';
+import { createRoomResponse } from './createRoom.js';
+import { ConnectionLimiter } from './connectionLimits.js';
+import { KeyedRateLimiter } from './rateLimit.js';
+import { loadLimitsConfig } from './limitsConfig.js';
 import { RoomManager } from './roomManager.js';
-import { parseRequestUrl, rawDataToString, resolveStaticFile, validDifficulty } from './serverUtils.js';
+import { clientIp, parseRequestUrl, rawDataToString, resolveStaticFile, validDifficulty } from './serverUtils.js';
 
 const PORT = Number(process.env.PORT ?? 8090);
 // CS2D_FAST=1 shrinks round timings for integration tests
@@ -14,8 +18,14 @@ const REAP_INTERVAL_MS = 30000;
 const MAX_WS_BYTES = 16 * 1024; // largest valid client message is ~1 KB of chat; ws closes the socket on anything bigger
 const MAX_BODY_BYTES = 16 * 1024; // POST /rooms bodies are tiny; reject anything larger
 
-const manager = new RoomManager();
-setInterval(() => manager.reap(), REAP_INTERVAL_MS);
+const limits = loadLimitsConfig(process.env);
+
+const manager = new RoomManager(limits.maxRooms);
+const createLimiter = new KeyedRateLimiter(limits.createBurst, limits.createPerMin / 60);
+setInterval(() => {
+  manager.reap();
+  createLimiter.prune();
+}, REAP_INTERVAL_MS);
 
 function readJsonBody(req: import('node:http').IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
@@ -96,17 +106,15 @@ const http = createServer(async (req, res) => {
   }
 
   if (url.pathname === '/rooms' && req.method === 'POST') {
-    try {
-      const body = (await readJsonBody(req)) as { map?: string; backfillBots?: boolean; botDifficulty?: string };
-      const map = listMaps().includes(body.map ?? '') ? (body.map as string) : 'dust2';
-      const botDifficulty = validDifficulty(body.botDifficulty);
-      const meta = manager.create(map, Boolean(body.backfillBots), FAST_TIMINGS, botDifficulty);
-      res.writeHead(200, { 'content-type': 'application/json', ...cors });
-      res.end(JSON.stringify({ code: meta.code, map: meta.map }));
-    } catch {
-      res.writeHead(400, { 'content-type': 'application/json', ...cors });
-      res.end(JSON.stringify({ error: 'bad request' }));
-    }
+    const result = await createRoomResponse({
+      ip: clientIp(req, limits.trustedProxyHops),
+      manager,
+      limiter: createLimiter,
+      timings: FAST_TIMINGS,
+      readBody: () => readJsonBody(req),
+    });
+    res.writeHead(result.status, { 'content-type': 'application/json', ...result.headers, ...cors });
+    res.end(JSON.stringify(result.body));
     return;
   }
 
@@ -134,6 +142,10 @@ wss.on('connection', (ws: WebSocket, req) => {
 
   const dispatch = (msg: ClientMsg): void => {
     if (msg.t === 'join' && playerId === null) {
+      if (room.isFull) {
+        ws.close(4003, 'room full');
+        return;
+      }
       const p = room.addPlayer(ws, msg.name, msg.team);
       playerId = p.id;
       playerTeam = p.team;
@@ -159,9 +171,16 @@ wss.on('connection', (ws: WebSocket, req) => {
     }
   };
 
+  const limiter = new ConnectionLimiter(Date.now());
+
   ws.on('message', (raw) => {
     const msg = parseClientMsg(rawDataToString(raw));
-    if (!msg) return; // drop malformed messages
+    const verdict = limiter.check(msg, Date.now()); // malformed frames count too
+    if (verdict === 'kick') {
+      ws.close(1008, 'rate limit exceeded');
+      return;
+    }
+    if (verdict === 'drop' || !msg) return; // drop over-budget and malformed messages
     try {
       dispatch(msg);
     } catch (err) {
@@ -174,7 +193,7 @@ wss.on('connection', (ws: WebSocket, req) => {
       const departedTeam = room.removePlayer(playerId);
       console.log(`[room ${meta.code}] #${playerId} left, ${room.players.size} online`);
       if (meta.backfillBots && departedTeam && room.phase !== 'waiting') {
-        room.addBot(departedTeam, meta.botDifficulty);
+        if (!room.isFull) room.addBot(departedTeam, meta.botDifficulty);
       }
     }
   });

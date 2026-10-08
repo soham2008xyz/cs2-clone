@@ -1,5 +1,6 @@
 /** Player-facing text for websocket close codes the server sends (see server/src/index.ts). */
 const CLOSE_MESSAGES: Record<number, string> = {
+  4003: 'room full',
   4004: 'room not found',
 };
 

@@ -1,6 +1,6 @@
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { parseRequestUrl, rawDataToString, resolveStaticFile, validDifficulty } from '../src/serverUtils.js';
+import { clientIp, envInt, parseRequestUrl, rawDataToString, resolveStaticFile, validDifficulty } from '../src/serverUtils.js';
 
 const ROOT = resolve('/srv/client/dist');
 
@@ -77,5 +77,44 @@ describe('parseRequestUrl', () => {
 
   it('treats a malformed absolute-form target as the root instead of throwing', () => {
     expect(parseRequestUrl('http://[').pathname).toBe('/');
+  });
+});
+
+describe('clientIp', () => {
+  const req = (xff: string | string[] | undefined, remoteAddress: string | undefined = '10.0.0.1') => ({
+    headers: xff === undefined ? {} : { 'x-forwarded-for': xff },
+    socket: { remoteAddress },
+  });
+
+  it('ignores x-forwarded-for when no proxy is trusted', () => {
+    expect(clientIp(req('1.2.3.4'), 0)).toBe('10.0.0.1');
+  });
+
+  it('takes the entry our own proxy appended, not a forged leftmost one', () => {
+    expect(clientIp(req('6.6.6.6, 1.2.3.4'), 1)).toBe('1.2.3.4');
+    expect(clientIp(req('6.6.6.6, 1.2.3.4, 9.9.9.9'), 2)).toBe('1.2.3.4');
+  });
+
+  it('falls back to the socket address when the header is missing or too short', () => {
+    expect(clientIp(req(undefined), 1)).toBe('10.0.0.1');
+    expect(clientIp(req('1.2.3.4'), 2)).toBe('10.0.0.1');
+    expect(clientIp({ headers: {}, socket: {} }, 1)).toBe('unknown');
+  });
+
+  it('joins repeated header values', () => {
+    expect(clientIp(req(['6.6.6.6', '1.2.3.4']), 1)).toBe('1.2.3.4');
+  });
+});
+
+describe('envInt', () => {
+  it('parses a non-negative integer', () => {
+    expect(envInt({ N: '12' }, 'N', 5)).toBe(12);
+    expect(envInt({ N: '0' }, 'N', 5)).toBe(0);
+  });
+
+  it('falls back when unset, malformed or negative', () => {
+    expect(envInt({}, 'N', 5)).toBe(5);
+    expect(envInt({ N: 'abc' }, 'N', 5)).toBe(5);
+    expect(envInt({ N: '-3' }, 'N', 5)).toBe(5);
   });
 });

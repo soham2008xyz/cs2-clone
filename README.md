@@ -39,6 +39,19 @@ about a minute to wake up. Once a room has active players, ongoing
 WebSocket traffic keeps it awake — the slow case is specifically the
 first connection after idle, not mid-game.
 
+### Server limits
+
+The server caps what one client can use. Each cap has an env override:
+
+| Limit | Default | Env var |
+| --- | --- | --- |
+| Live rooms (`POST /rooms` gets `503` when full) | 50 | `CS2D_MAX_ROOMS` |
+| Room creations per IP: burst / sustained per minute (`429` when over) | 10 / 6 | `CS2D_CREATE_BURST`, `CS2D_CREATE_PER_MIN` |
+| Players per room, bots included (join closes with code `4003`) | 10 | none |
+| Per-connection messages: inputs 120/s (burst 60), chat 3/s (burst 5), the rest 10/s | | none |
+
+`x-forwarded-for` is read only when `CS2D_TRUSTED_PROXY_HOPS` is above 0. It defaults to 1 on Render (which sets `RENDER`) and 0 elsewhere.
+
 ## Controls
 
 | Key | Action |
