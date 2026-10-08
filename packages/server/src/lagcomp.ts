@@ -14,7 +14,7 @@ interface Frame {
  * land where the shooter actually saw enemies on their screen.
  */
 export class LagCompensator {
-  private frames: Frame[] = [];
+  private readonly frames: Frame[] = [];
 
   record(tick: number, players: Iterable<{ id: number; pos: Vec2; alive: boolean }>): void {
     const positions = new Map<number, Vec2>();

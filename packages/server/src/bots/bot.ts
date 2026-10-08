@@ -55,6 +55,38 @@ const nearestSite = (map: CompiledMap, pos: Vec2): 'A' | 'B' => {
 /** Site center with a same-map fallback — defends computeGoal against a null goal even if a caller ever passes a stale/invalid site. */
 const siteGoal = (map: CompiledMap, site: 'A' | 'B'): Vec2 | null => map.siteCenters[site] ?? map.siteCenters[site === 'A' ? 'B' : 'A'];
 
+/** Coin-flip between both sites when the map has two, else take the only one. */
+function pickSite(map: CompiledMap): 'A' | 'B' {
+  const { A, B } = map.siteCenters;
+  if (A && B) return Math.random() < 0.5 ? 'A' : 'B'; // NOSONAR - non-cryptographic: coin-flip which site the bot pushes, not a security-sensitive use
+  return A ? 'A' : 'B';
+}
+
+/** Phases in which bots submit no input. */
+const IDLE_PHASES: ReadonlySet<string> = new Set(['freeze', 'waiting', 'round_end', 'match_end']);
+
+/** One tick's synthesized input: buttons held, aim angle, optional weapon-slot switch. */
+interface TickDecision {
+  buttons: number;
+  aim: number;
+  switchSlot?: number;
+}
+
+/** Walk-toward buttons and facing for heading from `from` to `to`. */
+function steerToward(from: Vec2, to: Vec2): Omit<TickDecision, 'switchSlot'> {
+  const d = sub(to, from);
+  let buttons = 0;
+  if (Math.abs(d.x) > 6) buttons |= d.x > 0 ? BTN.RIGHT : BTN.LEFT;
+  if (Math.abs(d.y) > 6) buttons |= d.y > 0 ? BTN.DOWN : BTN.UP;
+  return { buttons, aim: Math.atan2(d.y, d.x) };
+}
+
+/** Slot to switch back to a gun when holding a grenade (primary if owned), else no switch. */
+function gunSlotIfHoldingNade(p: PlayerConn): number | undefined {
+  if (p.activeSlot !== 4) return undefined;
+  return p.primary ? 1 : 2;
+}
+
 /** Solidity widened by active fire patches (goal tile stays reachable). */
 function fireBlocked(map: CompiledMap, zones: Array<{ pos: Vec2; radius: number }>, goal: Vec2): BlockedFn | undefined {
   if (zones.length === 0) return undefined;
@@ -76,7 +108,7 @@ function fireBlocked(map: CompiledMap, zones: Array<{ pos: Vec2; radius: number 
  */
 export class BotController {
   readonly playerId: number;
-  private difficulty: BotDifficulty;
+  private readonly difficulty: BotDifficulty;
   private seq = 0;
   private path: Vec2[] = [];
   private pathIndex = 0;
@@ -107,82 +139,91 @@ export class BotController {
     const p = room.players.get(this.playerId);
     if (!p) return;
 
-    if (room.roundNumber !== this.setupRound && (room.phase === 'freeze' || room.phase === 'live')) {
-      this.setupRound = room.roundNumber;
-      const { A, B } = room.map.siteCenters;
-      this.assignedSite = A && B ? (Math.random() < 0.5 ? 'A' : 'B') : A ? 'A' : 'B'; // NOSONAR - non-cryptographic: coin-flip which site the bot pushes, not a security-sensitive use
-      this.throwsThisRound = 0;
-      this.lastThrowTick = -Infinity;
-    }
-    // separate from setup: a backfill bot can join after its buy window has already
-    // closed, so don't latch boughtRound until a buy attempt was actually possible —
-    // otherwise it plays the whole round pistol-only and never retries.
-    if (room.roundNumber !== this.boughtRound && room.canBuy(this.playerId)) {
-      this.boughtRound = room.roundNumber;
-      for (const item of decideBotBuys(p.money, p.team, p.hasKit)) room.handleBuy(this.playerId, item);
-    }
+    this.setupRoundIfNew(room);
+    this.buyIfPossible(room, p);
 
-    if (!p.alive || room.phase === 'freeze' || room.phase === 'waiting' || room.phase === 'round_end' || room.phase === 'match_end') {
-      return;
-    }
+    if (!p.alive || IDLE_PHASES.has(room.phase)) return;
 
-    if (tick - this.lastStuckCheckTick > STUCK_CHECK_INTERVAL) {
-      if (this.path.length > 0 && dist(this.lastPos, p.pos) < STUCK_DIST) {
-        this.path = [];
-        this.pathIndex = 0;
-      }
-      this.lastPos = { ...p.pos };
-      this.lastStuckCheckTick = tick;
-    }
+    this.checkStuck(p.pos, tick);
 
     // flashed: no target acquisition, no shooting — keep stumbling along the path
     const blind = p.blindUntilTick > tick;
     if (blind) this.targetId = null;
     const enemy = blind ? null : this.findVisibleEnemy(room, p);
-    let buttons = 0;
-    let aim = p.aim;
-    let switchSlot: number | undefined;
+    const decision = enemy ? this.engage(room, p, enemy, tick) : this.roam(room, p, tick, blind);
 
-    if (enemy) {
-      if (this.targetId !== enemy.id) {
-        this.targetId = enemy.id;
-        this.targetSeenTick = tick;
-      }
-      if (p.team === 'CT' && enemy.hasBomb) {
-        room.botIntel = { site: nearestSite(room.map, enemy.pos), tick }; // share the sighting
-      }
-      aim = Math.atan2(enemy.pos.y - p.pos.y, enemy.pos.x - p.pos.x) + (Math.random() * 2 - 1) * this.params().aimJitter;
-      const engagingTicks = tick - this.targetSeenTick - this.params().reactionTicks;
-      if (engagingTicks >= 0 && this.wantsToFire(activeWeapon(p).auto, engagingTicks)) buttons |= BTN.ATTACK;
-      if (p.activeSlot === 4) switchSlot = p.primary ? 1 : 2; // don't fistfight holding a grenade
-    } else {
-      this.targetId = null;
-      const toss = blind ? null : this.utilityThrow(room, p, tick);
-      if (toss !== null) {
-        aim = toss;
-        buttons |= BTN.ATTACK;
-        switchSlot = 4; // slot switch and throw resolve in the same input
-      } else {
-        if (p.activeSlot === 4) switchSlot = p.primary ? 1 : 2; // back to a gun after throwing
-        const goalPx = this.computeGoal(room, p, tick);
-        if (goalPx) {
-          this.ensurePath(room, p.pos, goalPx, tick);
-          const next = this.currentWaypoint(p.pos);
-          if (next) {
-            const d = sub(next, p.pos);
-            aim = Math.atan2(d.y, d.x);
-            if (Math.abs(d.x) > 6) buttons |= d.x > 0 ? BTN.RIGHT : BTN.LEFT;
-            if (Math.abs(d.y) > 6) buttons |= d.y > 0 ? BTN.DOWN : BTN.UP;
-          } else if ((p.hasBomb && room.map.siteAt(p.pos.x, p.pos.y) !== null && room.phase === 'live') || (p.team === 'CT' && room.phase === 'planted')) {
-            buttons |= BTN.USE;
-          }
-        }
-      }
-    }
-
-    const input: InputMsg = { t: 'i', s: ++this.seq, b: buttons, a: aim, k: tick };
-    if (switchSlot) input.w = switchSlot;
+    const input: InputMsg = { t: 'i', s: ++this.seq, b: decision.buttons, a: decision.aim, k: tick };
+    if (decision.switchSlot) input.w = decision.switchSlot;
     room.handleInput(this.playerId, input);
+  }
+
+  private setupRoundIfNew(room: Room): void {
+    if (room.roundNumber === this.setupRound) return;
+    if (room.phase !== 'freeze' && room.phase !== 'live') return;
+    this.setupRound = room.roundNumber;
+    this.assignedSite = pickSite(room.map);
+    this.throwsThisRound = 0;
+    this.lastThrowTick = -Infinity;
+  }
+
+  private buyIfPossible(room: Room, p: PlayerConn): void {
+    // separate from setup: a backfill bot can join after its buy window has already
+    // closed, so don't latch boughtRound until a buy attempt was actually possible —
+    // otherwise it plays the whole round pistol-only and never retries.
+    if (room.roundNumber === this.boughtRound || !room.canBuy(this.playerId)) return;
+    this.boughtRound = room.roundNumber;
+    for (const item of decideBotBuys(p.money, p.team, p.hasKit)) room.handleBuy(this.playerId, item);
+  }
+
+  /** Drop the current path if we've barely moved since the last check. */
+  private checkStuck(pos: Vec2, tick: number): void {
+    if (tick - this.lastStuckCheckTick <= STUCK_CHECK_INTERVAL) return;
+    if (this.path.length > 0 && dist(this.lastPos, pos) < STUCK_DIST) {
+      this.path = [];
+      this.pathIndex = 0;
+    }
+    this.lastPos = { ...pos };
+    this.lastStuckCheckTick = tick;
+  }
+
+  /** Enemy in sight: track it, share bomb intel, aim (with jitter) and fire after reacting. */
+  private engage(room: Room, p: PlayerConn, enemy: PlayerConn, tick: number): TickDecision {
+    if (this.targetId !== enemy.id) {
+      this.targetId = enemy.id;
+      this.targetSeenTick = tick;
+    }
+    if (p.team === 'CT' && enemy.hasBomb) {
+      room.botIntel = { site: nearestSite(room.map, enemy.pos), tick }; // share the sighting
+    }
+    const jitter = (Math.random() * 2 - 1) * this.params().aimJitter; // NOSONAR - non-cryptographic: humanizing aim error
+    const aim = Math.atan2(enemy.pos.y - p.pos.y, enemy.pos.x - p.pos.x) + jitter;
+    const engagingTicks = tick - this.targetSeenTick - this.params().reactionTicks;
+    const firing = engagingTicks >= 0 && this.wantsToFire(activeWeapon(p).auto, engagingTicks);
+    // don't fistfight holding a grenade
+    return { buttons: firing ? BTN.ATTACK : 0, aim, switchSlot: gunSlotIfHoldingNade(p) };
+  }
+
+  /** No enemy in sight: throw utility if lined up, otherwise walk the path and plant/defuse on arrival. */
+  private roam(room: Room, p: PlayerConn, tick: number, blind: boolean): TickDecision {
+    this.targetId = null;
+    const toss = blind ? null : this.utilityThrow(room, p, tick);
+    // slot switch and throw resolve in the same input
+    if (toss !== null) return { buttons: BTN.ATTACK, aim: toss, switchSlot: 4 };
+
+    const switchSlot = gunSlotIfHoldingNade(p); // back to a gun after throwing
+    const goalPx = this.computeGoal(room, p, tick);
+    if (!goalPx) return { buttons: 0, aim: p.aim, switchSlot };
+
+    this.ensurePath(room, p.pos, goalPx, tick);
+    const next = this.currentWaypoint(p.pos);
+    if (next) return { ...steerToward(p.pos, next), switchSlot };
+    return { buttons: this.shouldUse(room, p) ? BTN.USE : 0, aim: p.aim, switchSlot };
+  }
+
+  /** At the end of the path: plant if carrying the bomb on a site, or defuse as CT post-plant. */
+  private shouldUse(room: Room, p: PlayerConn): boolean {
+    const canPlant = p.hasBomb && room.map.siteAt(p.pos.x, p.pos.y) !== null && room.phase === 'live';
+    return canPlant || (p.team === 'CT' && room.phase === 'planted');
   }
 
   /**

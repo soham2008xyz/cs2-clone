@@ -72,6 +72,7 @@ import {
   type RosterEntry,
   type RoundEndReason,
   type SelfState,
+  type ShotHit,
   type TeamId,
   type Vec2,
   type WeaponDef,
@@ -192,13 +193,30 @@ interface FireZone {
   ownerTeam: TeamId;
 }
 
-const slotOf = (p: PlayerConn): WeaponSlot | null =>
-  p.activeSlot === 1 ? p.primary : p.activeSlot === 2 ? p.secondary : null;
+const slotOf = (p: PlayerConn): WeaponSlot | null => {
+  if (p.activeSlot === 1) return p.primary;
+  if (p.activeSlot === 2) return p.secondary;
+  return null;
+};
+
+/** Best slot to hold after losing the current gun: primary, else secondary, else knife. */
+const fallbackSlot = (p: PlayerConn): PlayerConn['activeSlot'] => {
+  if (p.primary) return 1;
+  if (p.secondary) return 2;
+  return 3;
+};
 
 export const activeWeapon = (p: PlayerConn): WeaponDef => {
   const slot = slotOf(p);
   return getWeapon(slot ? slot.id : 'knife');
 };
+
+/** End-of-round payout for one player. CS2: losers alive when time expires (saving) receive no loss bonus. */
+function roundIncome(p: PlayerConn, winner: TeamId, reason: RoundEndReason, winnerMoney: number, loserMoney: number): number {
+  if (p.team === winner) return winnerMoney;
+  const saving = reason === 'time' && p.alive;
+  return saving ? 0 : loserMoney;
+}
 
 /** Helmets make armor absorb more of every hit. */
 const penVs = (victim: PlayerConn, pen: number): number => (victim.hasHelmet ? pen * HELMET_PEN_MULT : pen);
@@ -217,21 +235,21 @@ export class Room {
   private bombWasPlanted = false;
   private liveStartTick = 0;
   /** `blockedFor`: id of the player who dropped it — they can't walk-over re-grab it until they step out of reach (0 = nobody). */
-  private groundItems = new Map<number, { weaponId: string; pos: Vec2; ammo: number; reserve: number; blockedFor: number }>();
+  private readonly groundItems = new Map<number, { weaponId: string; pos: Vec2; ammo: number; reserve: number; blockedFor: number }>();
   private nextItemId = 1;
-  private activeNades = new Map<number, ActiveNade>();
-  private smokes = new Map<number, SmokeZone>();
-  private fires = new Map<number, FireZone>();
+  private readonly activeNades = new Map<number, ActiveNade>();
+  private readonly smokes = new Map<number, SmokeZone>();
+  private readonly fires = new Map<number, FireZone>();
   private fireVersion = 0;
   private nextNadeId = 1;
   private nextZoneId = 1;
-  private bots = new Map<number, BotController>();
+  private readonly bots = new Map<number, BotController>();
   private nextBotName = 1;
 
   private nextId = 1;
   private timer: ReturnType<typeof setInterval> | null = null;
-  private rng = mulberry32(0xc0ffee);
-  private lagComp = new LagCompensator();
+  private readonly rng = mulberry32(0xc0ffee);
+  private readonly lagComp = new LagCompensator();
   private events: Array<{ ev: GameEvent; to?: number }> = [];
 
   readonly times: RoomTimings;
@@ -430,36 +448,44 @@ export class Room {
     const p = this.players.get(id);
     if (!p || !this.buyingAllowed(p)) return;
 
+    if (item === 'kevlar' || item === 'helmet' || item === 'kit') {
+      this.buyEquipment(p, item);
+      return;
+    }
+    const grenadeDef = GRENADES[item as GrenadeKind];
+    if (grenadeDef) {
+      this.buyGrenade(p, item, grenadeDef);
+      return;
+    }
+    this.buyWeapon(p, item);
+  }
+
+  private buyEquipment(p: PlayerConn, item: 'kevlar' | 'helmet' | 'kit'): void {
     if (item === 'kevlar') {
       if (p.money < PRICE_KEVLAR || p.armor >= 100) return;
       p.money -= PRICE_KEVLAR;
       p.armor = 100;
-      return;
-    }
-    if (item === 'helmet') {
+    } else if (item === 'helmet') {
       if (p.hasHelmet || p.armor <= 0 || p.money < PRICE_HELMET) return;
       p.money -= PRICE_HELMET;
       p.hasHelmet = true;
-      return;
-    }
-    if (item === 'kit') {
+    } else {
       if (p.team !== 'CT' || p.hasKit || p.money < PRICE_DEFUSE_KIT) return;
       p.money -= PRICE_DEFUSE_KIT;
       p.hasKit = true;
-      return;
     }
+  }
 
-    const grenadeDef = GRENADES[item as GrenadeKind];
-    if (grenadeDef) {
-      if (grenadeDef.team && grenadeDef.team !== p.team) return;
-      if (p.nades.length >= GRENADE_MAX_TOTAL) return;
-      if (p.nades.filter((n) => n === item).length >= grenadeDef.maxCarry) return;
-      if (p.money < grenadeDef.price) return;
-      p.money -= grenadeDef.price;
-      p.nades.push(item);
-      return;
-    }
+  private buyGrenade(p: PlayerConn, item: string, grenadeDef: (typeof GRENADES)[GrenadeKind]): void {
+    if (grenadeDef.team && grenadeDef.team !== p.team) return;
+    if (p.nades.length >= GRENADE_MAX_TOTAL) return;
+    if (p.nades.filter((n) => n === item).length >= grenadeDef.maxCarry) return;
+    if (p.money < grenadeDef.price) return;
+    p.money -= grenadeDef.price;
+    p.nades.push(item);
+  }
 
+  private buyWeapon(p: PlayerConn, item: string): void {
     if (!(item in WEAPONS)) return; // unknown item id — ignore rather than throw
     const w = getWeapon(item.replace(/[^a-z0-9]/g, ''));
     if (w.cls === 'knife') return;
@@ -519,7 +545,7 @@ export class Room {
     this.dropWeapon(p, slot);
     if (p.activeSlot === 1) p.primary = null;
     else p.secondary = null;
-    p.activeSlot = p.primary ? 1 : p.secondary ? 2 : 3;
+    p.activeSlot = fallbackSlot(p);
     p.reloadEndTick = 0;
   }
 
@@ -665,22 +691,41 @@ export class Room {
   private startRound(): void {
     this.roundNumber++;
 
-    if (isSideSwap(this.roundNumber)) {
-      for (const p of this.players.values()) {
-        p.team = p.team === 'T' ? 'CT' : 'T';
-      }
-      const { T, CT } = this.score;
-      this.score = { T: CT, CT: T };
-      const s = this.streaks;
-      this.streaks = { T: s.CT, CT: s.T };
-      this.emit({ e: 'swap' });
-      this.broadcastRoster();
-    }
+    if (isSideSwap(this.roundNumber)) this.swapSides();
 
     const freshEconomy = isPistolRound(this.roundNumber) || isOvertimeHalfStart(this.roundNumber);
     const otMoney = isOvertimeHalfStart(this.roundNumber);
     if (freshEconomy) this.streaks = { T: 0, CT: 0 }; // loss bonus resets at halftime / OT halves (CS2)
 
+    this.clearRoundWorld();
+
+    const byTeam: Record<TeamId, number> = { T: 0, CT: 0 };
+    for (const p of this.players.values()) {
+      this.respawnForRound(p, byTeam[p.team]++, freshEconomy, otMoney);
+    }
+
+    this.assignBomb();
+
+    this.phase = 'freeze';
+    this.phaseEndTick = this.tick + sec(this.times.freeze);
+    this.emit({ e: 'round_start', rn: this.roundNumber });
+    this.broadcastRoster();
+  }
+
+  private swapSides(): void {
+    for (const p of this.players.values()) {
+      p.team = p.team === 'T' ? 'CT' : 'T';
+    }
+    const { T, CT } = this.score;
+    this.score = { T: CT, CT: T };
+    const s = this.streaks;
+    this.streaks = { T: s.CT, CT: s.T };
+    this.emit({ e: 'swap' });
+    this.broadcastRoster();
+  }
+
+  /** Wipe per-round world state: ground items, utility, intel, bomb. */
+  private clearRoundWorld(): void {
     this.groundItems.clear();
     this.activeNades.clear();
     this.smokes.clear();
@@ -689,54 +734,51 @@ export class Room {
     this.botIntel = null;
     this.bomb = { mode: 'none', pos: { x: 0, y: 0 }, carrierId: 0, explodeTick: 0 };
     this.bombWasPlanted = false;
+  }
 
-    const byTeam: Record<TeamId, number> = { T: 0, CT: 0 };
-    for (const p of this.players.values()) {
-      const survived = p.alive;
-      p.alive = true;
-      p.hp = MAX_HP;
-      p.hasBomb = false;
-      p.bloom = 0;
-      p.reloadEndTick = 0;
-      p.actionStartTick = 0;
-      p.respawnTick = 0;
-      p.blindUntilTick = 0;
-      p.pos = this.spawnPos(p.team, byTeam[p.team]++);
-      if (freshEconomy) {
-        p.money = otMoney ? OT_MONEY : START_MONEY;
-        p.armor = 0;
-        p.hasHelmet = false;
-        p.hasKit = false;
-        p.primary = null;
-        p.nades = [];
-        this.givePistolLoadout(p);
-      } else if (!survived) {
-        p.primary = null;
-        p.nades = [];
-        p.armor = 0; // gear does not survive death (CS2)
-        p.hasHelmet = false;
-        p.hasKit = false;
-        this.givePistolLoadout(p);
-      } else {
-        // survivors keep weapons; make sure the pistol matches the (possibly swapped) side
-        if (!p.secondary) this.givePistolLoadout(p);
-        p.activeSlot = p.primary ? 1 : 2;
-      }
-      if (p.team === 'T') p.hasKit = false;
+  /** Reset one player for a new round: spawn, vitals, and loadout per economy / survival. */
+  private respawnForRound(p: PlayerConn, spawnIndex: number, freshEconomy: boolean, otMoney: boolean): void {
+    const survived = p.alive;
+    p.alive = true;
+    p.hp = MAX_HP;
+    p.hasBomb = false;
+    p.bloom = 0;
+    p.reloadEndTick = 0;
+    p.actionStartTick = 0;
+    p.respawnTick = 0;
+    p.blindUntilTick = 0;
+    p.pos = this.spawnPos(p.team, spawnIndex);
+    if (freshEconomy) {
+      p.money = otMoney ? OT_MONEY : START_MONEY;
+      p.armor = 0;
+      p.hasHelmet = false;
+      p.hasKit = false;
+      p.primary = null;
+      p.nades = [];
+      this.givePistolLoadout(p);
+    } else if (!survived) {
+      p.primary = null;
+      p.nades = [];
+      p.armor = 0; // gear does not survive death (CS2)
+      p.hasHelmet = false;
+      p.hasKit = false;
+      this.givePistolLoadout(p);
+    } else {
+      // survivors keep weapons; make sure the pistol matches the (possibly swapped) side
+      if (!p.secondary) this.givePistolLoadout(p);
+      p.activeSlot = p.primary ? 1 : 2;
     }
+    if (p.team === 'T') p.hasKit = false;
+  }
 
-    // hand the bomb to a random T
+  /** Hand the bomb to a random T. */
+  private assignBomb(): void {
     const ts = this.teamPlayers('T');
     if (ts.length > 0) {
       const carrier = ts[Math.floor(this.rng() * ts.length)];
       carrier.hasBomb = true;
       this.bomb = { mode: 'carried', pos: carrier.pos, carrierId: carrier.id, explodeTick: 0 };
     }
-
-    this.phase = 'freeze';
-    this.phaseEndTick = this.tick + sec(this.times.freeze);
-    this.emit({ e: 'round_start', rn: this.roundNumber });
-    this.broadcastRoster();
   }
 
   private endRound(reason: RoundEndReason): void {
@@ -745,9 +787,7 @@ export class Room {
     this.score[winner]++;
 
     for (const p of this.players.values()) {
-      // CS2: losers alive when time expires (saving) receive no loss bonus
-      const noSaveMoney = p.team !== winner && reason === 'time' && p.alive;
-      p.money = clampMoney(p.money + (p.team === winner ? winnerMoney : noSaveMoney ? 0 : loserMoney));
+      p.money = clampMoney(p.money + roundIncome(p, winner, reason, winnerMoney, loserMoney));
       p.actionStartTick = 0;
     }
 
@@ -936,23 +976,29 @@ export class Room {
       const stepped = stepGrenade({ pos: n.pos, vel: n.vel }, this.map, TICK_DT);
       n.pos = stepped.pos;
       n.vel = stepped.vel;
-
-      const age = this.tick - n.bornTick;
-      const atRest = n.vel.x === 0 && n.vel.y === 0;
-      let detonate: boolean;
-      if (n.kind === 'smoke') {
-        detonate = (atRest && age >= sec(SMOKE_MIN_AIR_SEC)) || age >= sec(SMOKE_MAX_AIR_SEC);
-      } else if (n.kind === 'molotov' || n.kind === 'incendiary') {
-        detonate = stepped.bounced || atRest || age >= sec(FIRE_MAX_AIR_SEC);
-      } else {
-        detonate = this.tick >= n.fuseTick; // he / flash: timed fuse
-      }
-      if (detonate) {
+      if (this.shouldDetonate(n, stepped.bounced)) {
         this.detonateNade(n);
         this.activeNades.delete(id);
       }
     }
 
+    this.burnFires();
+
+    for (const [id, s] of this.smokes) {
+      if (this.tick >= s.untilTick) this.smokes.delete(id);
+    }
+  }
+
+  private shouldDetonate(n: ActiveNade, bounced: boolean): boolean {
+    const age = this.tick - n.bornTick;
+    const atRest = n.vel.x === 0 && n.vel.y === 0;
+    if (n.kind === 'smoke') return (atRest && age >= sec(SMOKE_MIN_AIR_SEC)) || age >= sec(SMOKE_MAX_AIR_SEC);
+    if (n.kind === 'molotov' || n.kind === 'incendiary') return bounced || atRest || age >= sec(FIRE_MAX_AIR_SEC);
+    return this.tick >= n.fuseTick; // he / flash: timed fuse
+  }
+
+  /** Expire finished fires and damage everyone standing in a live one. */
+  private burnFires(): void {
     const burned = new Set<number>(); // overlapping fires burn once per tick
     for (const [id, f] of this.fires) {
       if (this.tick >= f.untilTick) {
@@ -961,8 +1007,7 @@ export class Room {
         continue;
       }
       for (const p of this.players.values()) {
-        if (!p.alive || burned.has(p.id) || dist(p.pos, f.pos) > MOLOTOV_RADIUS) continue;
-        if (!FRIENDLY_FIRE && p.id !== f.ownerId && p.team === f.ownerTeam) continue;
+        if (burned.has(p.id) || !this.fireReaches(f, p)) continue;
         burned.add(p.id);
         const d = MOLOTOV_DPS * TICK_DT;
         p.hp -= d;
@@ -970,10 +1015,12 @@ export class Room {
         if (p.hp <= 0) this.killByUtility(p, f.ownerId, f.kind);
       }
     }
+  }
 
-    for (const [id, s] of this.smokes) {
-      if (this.tick >= s.untilTick) this.smokes.delete(id);
-    }
+  /** Alive, inside the fire, and not a teammate of its thrower (unless friendly fire / own fire). */
+  private fireReaches(f: FireZone, p: PlayerConn): boolean {
+    if (!p.alive || dist(p.pos, f.pos) > MOLOTOV_RADIUS) return false;
+    return FRIENDLY_FIRE || p.id === f.ownerId || p.team !== f.ownerTeam;
   }
 
   private tryFire(p: PlayerConn, input: InputMsg): void {
@@ -995,28 +1042,39 @@ export class Room {
     const spread = w.spreadBase + (moving && !walking ? w.spreadMove : 0) + p.bloom;
     p.bloom = Math.min(0.12, p.bloom + w.spreadPerShot);
 
-    const rewound = this.lagComp.rewind(p.lastSeenTick, this.tick);
+    const result = traceShot(
+      { origin: p.pos, aim: input.a, spread, weapon: w, shooterTeam: p.team },
+      this.lagCompensatedTargets(p),
+      this.map,
+      this.rng,
+      FRIENDLY_FIRE,
+    );
+    this.emit({ e: 'shot', id: p.id, x: p.pos.x, y: p.pos.y, tx: result.end.x, ty: result.end.y, w: w.id });
+
+    if (result.hit) this.applyShotHit(p, w, result.hit);
+  }
+
+  /** Everyone but the shooter, rewound to where the shooter saw them. */
+  private lagCompensatedTargets(shooter: PlayerConn): CombatTarget[] {
+    const rewound = this.lagComp.rewind(shooter.lastSeenTick, this.tick);
     const targets: CombatTarget[] = [];
     for (const other of this.players.values()) {
-      if (other.id === p.id || !other.alive) continue;
+      if (other.id === shooter.id || !other.alive) continue;
       const pos = rewound?.get(other.id) ?? other.pos;
       targets.push({ id: other.id, pos, team: other.team, alive: other.alive });
     }
+    return targets;
+  }
 
-    const result = traceShot(p.pos, input.a, spread, w, p.team, targets, this.map, this.rng, FRIENDLY_FIRE);
-    this.emit({ e: 'shot', id: p.id, x: p.pos.x, y: p.pos.y, tx: result.end.x, ty: result.end.y, w: w.id });
-
-    if (result.hit) {
-      const victim = this.players.get(result.hit.targetId);
-      if (victim?.alive) {
-        const { hpDamage, armor } = applyArmor(result.hit.rawDamage, victim.armor, penVs(victim, w.armorPen));
-        victim.armor = armor;
-        victim.hp -= hpDamage;
-        this.emit({ e: 'hit', id: p.id, target: victim.id, d: hpDamage }, p.id);
-        this.emit({ e: 'hurt', d: hpDamage, from: p.id }, victim.id);
-        if (victim.hp <= 0) this.onKill(p, victim, w);
-      }
-    }
+  private applyShotHit(shooter: PlayerConn, w: WeaponDef, hit: ShotHit): void {
+    const victim = this.players.get(hit.targetId);
+    if (!victim?.alive) return;
+    const { hpDamage, armor } = applyArmor(hit.rawDamage, victim.armor, penVs(victim, w.armorPen));
+    victim.armor = armor;
+    victim.hp -= hpDamage;
+    this.emit({ e: 'hit', id: shooter.id, target: victim.id, d: hpDamage }, shooter.id);
+    this.emit({ e: 'hurt', d: hpDamage, from: shooter.id }, victim.id);
+    if (victim.hp <= 0) this.onKill(shooter, victim, w);
   }
 
   private onKill(killer: PlayerConn, victim: PlayerConn, weapon: WeaponDef): void {
@@ -1043,7 +1101,26 @@ export class Room {
   private step(): void {
     this.tick++;
 
-    // phase transitions driven by time
+    this.advancePhase();
+    this.guardAbandonedMatch();
+
+    const canMove = this.phase !== 'freeze';
+
+    for (const bot of this.bots.values()) bot.think(this, this.tick);
+
+    for (const p of this.players.values()) this.updatePlayer(p, canMove);
+
+    this.updateGrenades();
+    this.bombPickupCheck();
+    this.groundPickupCheck();
+    this.checkWinConditions();
+
+    this.lagComp.record(this.tick, this.players.values());
+    if (this.tick % SNAPSHOT_EVERY === 0) this.broadcastSnapshot();
+  }
+
+  /** Phase transitions driven by time (and, in warmup, by both teams being present). */
+  private advancePhase(): void {
     if (this.phase === 'waiting') {
       if (this.teamPlayers('T').length > 0 && this.teamPlayers('CT').length > 0) {
         this.startMatch();
@@ -1057,78 +1134,74 @@ export class Room {
     } else if (this.phase === 'match_end' && this.tick >= this.phaseEndTick) {
       this.resetToWarmup();
     }
+  }
 
-    // abandoned match guard
-    if (this.phase !== 'waiting' && this.phase !== 'match_end') {
-      if (this.teamPlayers('T').length === 0 || this.teamPlayers('CT').length === 0) {
-        this.resetToWarmup();
-      }
+  private guardAbandonedMatch(): void {
+    if (this.phase === 'waiting' || this.phase === 'match_end') return;
+    if (this.teamPlayers('T').length === 0 || this.teamPlayers('CT').length === 0) {
+      this.resetToWarmup();
+    }
+  }
+
+  private updatePlayer(p: PlayerConn, canMove: boolean): void {
+    if (this.phase === 'waiting' && !p.alive && p.respawnTick > 0 && this.tick >= p.respawnTick) {
+      this.warmupRespawn(p);
     }
 
-    const canMove = this.phase !== 'freeze';
-
-    for (const bot of this.bots.values()) bot.think(this, this.tick);
-
-    for (const p of this.players.values()) {
-      if (this.phase === 'waiting' && !p.alive && p.respawnTick > 0 && this.tick >= p.respawnTick) {
-        p.alive = true;
-        p.hp = MAX_HP;
-        p.bloom = 0;
-        p.respawnTick = 0;
-        p.blindUntilTick = 0;
-        p.armor = 0;
-        p.reloadEndTick = 0;
-        p.actionStartTick = 0;
-        p.nextShotTick = 0;
-        p.pos = this.spawnPos(p.team, Math.floor(this.rng() * 10));
-        p.primary = null; // warmup respawn = fresh pistol loadout
-        this.givePistolLoadout(p);
-      }
-
-      if (p.reloadEndTick > 0 && this.tick >= p.reloadEndTick) {
-        p.reloadEndTick = 0;
-        this.finishReload(p);
-      }
-
-      const queue = p.inputQueue;
-      p.inputQueue = [];
-      for (const input of queue) {
-        p.lastSeq = input.s;
-        if (input.k !== undefined) p.lastSeenTick = input.k;
-        if (!Number.isFinite(input.a)) input.a = p.aim; // reject NaN/Infinity aim (would poison grenade velocity / shot tracing)
-        p.aim = input.a;
-        if (p.alive) {
-          if (input.w) this.switchSlot(p, input.w);
-          if (input.b & BTN.RELOAD) this.startReload(p);
-          if ((input.b & BTN.DROP) !== 0 && (p.prevButtons & BTN.DROP) === 0) this.dropActiveWeapon(p);
-          const before = p.pos;
-          if (canMove) {
-            p.pos = stepMovement(p.pos, buttonsToMove(input.b), activeWeapon(p).mobility, this.map, TICK_DT);
-          }
-          const moved = dist(before, p.pos) > MOVE_EPSILON;
-          if (input.b & BTN.ATTACK) {
-            if (p.activeSlot === 4) this.throwGrenade(p, input);
-            else this.tryFire(p, input);
-          }
-          this.updatePlantDefuse(p, input, moved);
-        }
-        p.prevButtons = input.b;
-        p.buttons = input.b;
-      }
-
-      if (p.hasBomb) this.bomb.pos = p.pos;
-
-      const w = activeWeapon(p);
-      if (w.spreadDecay > 0) p.bloom = Math.max(0, p.bloom - w.spreadDecay * TICK_DT);
+    if (p.reloadEndTick > 0 && this.tick >= p.reloadEndTick) {
+      p.reloadEndTick = 0;
+      this.finishReload(p);
     }
 
-    this.updateGrenades();
-    this.bombPickupCheck();
-    this.groundPickupCheck();
-    this.checkWinConditions();
+    const queue = p.inputQueue;
+    p.inputQueue = [];
+    for (const input of queue) this.applyInput(p, input, canMove);
 
-    this.lagComp.record(this.tick, this.players.values());
-    if (this.tick % SNAPSHOT_EVERY === 0) this.broadcastSnapshot();
+    if (p.hasBomb) this.bomb.pos = p.pos;
+
+    const w = activeWeapon(p);
+    if (w.spreadDecay > 0) p.bloom = Math.max(0, p.bloom - w.spreadDecay * TICK_DT);
+  }
+
+  private warmupRespawn(p: PlayerConn): void {
+    p.alive = true;
+    p.hp = MAX_HP;
+    p.bloom = 0;
+    p.respawnTick = 0;
+    p.blindUntilTick = 0;
+    p.armor = 0;
+    p.reloadEndTick = 0;
+    p.actionStartTick = 0;
+    p.nextShotTick = 0;
+    p.pos = this.spawnPos(p.team, Math.floor(this.rng() * 10));
+    p.primary = null; // warmup respawn = fresh pistol loadout
+    this.givePistolLoadout(p);
+  }
+
+  private applyInput(p: PlayerConn, input: InputMsg, canMove: boolean): void {
+    p.lastSeq = input.s;
+    if (input.k !== undefined) p.lastSeenTick = input.k;
+    if (!Number.isFinite(input.a)) input.a = p.aim; // reject NaN/Infinity aim (would poison grenade velocity / shot tracing)
+    p.aim = input.a;
+    if (p.alive) this.applyAliveInput(p, input, canMove);
+    p.prevButtons = input.b;
+    p.buttons = input.b;
+  }
+
+  private applyAliveInput(p: PlayerConn, input: InputMsg, canMove: boolean): void {
+    if (input.w) this.switchSlot(p, input.w);
+    if (input.b & BTN.RELOAD) this.startReload(p);
+    if ((input.b & BTN.DROP) !== 0 && (p.prevButtons & BTN.DROP) === 0) this.dropActiveWeapon(p);
+    const before = p.pos;
+    if (canMove) {
+      p.pos = stepMovement(p.pos, buttonsToMove(input.b), activeWeapon(p).mobility, this.map, TICK_DT);
+    }
+    const moved = dist(before, p.pos) > MOVE_EPSILON;
+    if (input.b & BTN.ATTACK) {
+      if (p.activeSlot === 4) this.throwGrenade(p, input);
+      else this.tryFire(p, input);
+    }
+    this.updatePlantDefuse(p, input, moved);
   }
 
   // ── snapshots ────────────────────────────────────────────────────────────
@@ -1166,10 +1239,15 @@ export class Room {
     if (this.bomb.mode === 'dropped') m.bomb = [this.bomb.pos.x, this.bomb.pos.y, 0];
     if (this.bomb.mode === 'planted') m.bomb = [this.bomb.pos.x, this.bomb.pos.y, 1];
     if (p.actionStartTick > 0) {
-      const total = p.team === 'T' ? sec(this.times.plant) : sec(p.hasKit ? this.times.defuseKit : this.times.defuse);
-      m.prog = Math.min(1, (this.tick - p.actionStartTick) / total);
+      m.prog = Math.min(1, (this.tick - p.actionStartTick) / this.actionDurationTicks(p));
     }
     return m;
+  }
+
+  /** Ticks a plant (T) or defuse (CT, faster with a kit) takes. */
+  private actionDurationTicks(p: PlayerConn): number {
+    if (p.team === 'T') return sec(this.times.plant);
+    return sec(p.hasKit ? this.times.defuseKit : this.times.defuse);
   }
 
   private selfState(p: PlayerConn): SelfState {
