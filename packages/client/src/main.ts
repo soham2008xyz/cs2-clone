@@ -2,7 +2,8 @@ import Phaser from 'phaser';
 import { BootScene } from './scenes/BootScene.js';
 import { GameScene } from './scenes/GameScene.js';
 import { HudScene } from './scenes/HudScene.js';
-import { initMenu } from './menu.js';
+import { initMenu, resumeMenu } from './menu.js';
+import { teardownChat } from './chat.js';
 
 let game: Phaser.Game | null = null;
 
@@ -26,21 +27,24 @@ function startGame(): void {
     scene: [BootScene, GameScene, HudScene],
   });
 
-  game.events.once('session:end', returnToMenu);
+  game.events.once('session:end', (error?: string) => returnToMenu(error));
   game.events.once('session:restart', restartGame);
 }
 
-function returnToMenu(): void {
+function returnToMenu(error?: string): void {
   game?.destroy(true);
   game = null;
+  teardownChat();
   document.getElementById('game')!.style.display = 'none';
   document.getElementById('menu')!.style.display = 'flex';
+  resumeMenu(error);
 }
 
 /** Tear down and relaunch with the (corrected) session — e.g. map mismatch on join. */
 function restartGame(): void {
   game?.destroy(true);
   game = null;
+  teardownChat();
   startGame();
 }
 

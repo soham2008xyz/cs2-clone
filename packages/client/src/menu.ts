@@ -40,6 +40,13 @@ function renderRooms(rooms: RoomListing[], onJoin: (code: string, map: string) =
   }
 }
 
+let resume: ((error?: string) => void) | null = null;
+
+/** Back to the menu after a match: shows an optional message, refreshes the room list at once and restarts polling. */
+export function resumeMenu(error = ''): void {
+  resume?.(error);
+}
+
 /** Wires the DOM menu overlay; calls onStart() once a room is chosen and session is populated. */
 export function initMenu(onStart: () => void): void {
   let refreshTimer: ReturnType<typeof setInterval> | null = null;
@@ -61,6 +68,13 @@ export function initMenu(onStart: () => void): void {
     session.botsRequested = botsRequested;
     if (refreshTimer) clearInterval(refreshTimer);
     onStart();
+  };
+
+  resume = (error = '') => {
+    showError(error);
+    if (refreshTimer) clearInterval(refreshTimer);
+    refreshRooms();
+    refreshTimer = setInterval(refreshRooms, ROOM_LIST_REFRESH_MS);
   };
 
   const join = (code: string, map?: string) => {
@@ -108,6 +122,5 @@ export function initMenu(onStart: () => void): void {
     if (e.key === 'Enter') el<HTMLButtonElement>('menu-join').click();
   });
 
-  refreshRooms();
-  refreshTimer = setInterval(refreshRooms, ROOM_LIST_REFRESH_MS);
+  resume();
 }

@@ -27,11 +27,15 @@ import { nadeColor, teamChatColor } from './presentation.js';
 import { sfx } from '../audio/sfx.js';
 import { toggleMute, unlockAudio } from '../audio/synth.js';
 import { appendChatLine, initChat } from '../chat.js';
+import { closeMessage } from '../net/closeReasons.js';
 import { Connection, serverUrl } from '../net/connection.js';
 import { Predictor } from '../net/prediction.js';
 import { SnapshotBuffer, type RemoteState } from '../net/interpolation.js';
 import { renderMap } from '../render/mapRender.js';
 import { session } from '../session.js';
+
+/** How long the disconnect message stays up before the player returns to the menu. */
+const SESSION_END_DELAY_MS = 3000;
 
 interface Entity {
   sprite: Phaser.GameObjects.Sprite;
@@ -93,6 +97,7 @@ export class GameScene extends Phaser.Scene {
   private spectateIndex = 0;
   private spectateTarget = -1;
   private chatOpen = false;
+  private ending = false;
   private buyOpen = false;
   /** Set when the buy menu closes under a held click, so that click never turns into a shot. */
   private attackLatched = false;
@@ -235,9 +240,7 @@ export class GameScene extends Phaser.Scene {
       }
       for (const ev of msg.ev ?? []) this.handleEvent(ev);
     };
-    this.conn.onClose = () => {
-      this.statusText.setText('disconnected from server').setVisible(true);
-    };
+    this.conn.onClose = (code, reason) => this.endSession(closeMessage(code, reason));
     this.conn.onChat = (msg) => {
       appendChatLine(msg.from, msg.text, teamChatColor(msg.team));
     };
@@ -257,8 +260,17 @@ export class GameScene extends Phaser.Scene {
         });
       })
       .catch(() => {
-        this.statusText.setText('cannot reach server — start it with: npm run dev:server').setVisible(true);
+        this.endSession('cannot reach server — start it with: npm run dev:server');
       });
+  }
+
+  /** Shows why the session ended, then hands the player back to the menu (once). */
+  private endSession(message: string): void {
+    if (this.ending) return;
+    this.ending = true;
+    this.statusText.setText(message).setVisible(true);
+    this.pingTimer?.destroy();
+    this.time.delayedCall(SESSION_END_DELAY_MS, () => this.game.events.emit('session:end', message));
   }
 
   private onChatSend(text: string): void {
