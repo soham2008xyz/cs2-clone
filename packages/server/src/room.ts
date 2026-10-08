@@ -88,6 +88,8 @@ const BOMB_EXPLOSION_RADIUS = 350;
 const BOMB_EXPLOSION_DAMAGE = 300;
 const BOMB_ARMOR_PEN = 0.6;
 const DEFUSE_RADIUS = 56;
+/** Sub-pixel displacement below this counts as standing still (plant/defuse). */
+const MOVE_EPSILON = 0.01;
 
 const sec = (s: number): number => Math.round(s * TICK_RATE);
 
@@ -565,39 +567,42 @@ export class Room {
 
   // ── plant / defuse ───────────────────────────────────────────────────────
 
-  private updatePlantDefuse(p: PlayerConn, input: InputMsg): void {
+  /**
+   * `moved` is actual displacement this input, not held direction keys: a player
+   * pushing into a wall or crate is pinned in place and may still plant/defuse.
+   */
+  private updatePlantDefuse(p: PlayerConn, input: InputMsg, moved: boolean): void {
     const using = (input.b & BTN.USE) !== 0;
-    const moving = (input.b & (BTN.UP | BTN.DOWN | BTN.LEFT | BTN.RIGHT)) !== 0;
 
     // USE also picks up guns — including one you just dropped (walk-over pickup skips those)
     if (using && p.alive) this.tryPickup(p, true);
 
-    // planting
+    const action = this.bombAction(p);
+    if (!action?.inZone || !using || moved || !p.alive) {
+      p.actionStartTick = 0;
+      return;
+    }
+    if (p.actionStartTick === 0) p.actionStartTick = this.tick;
+    if (this.tick - p.actionStartTick >= action.ticks) action.complete();
+  }
+
+  /** The plant (T carrier, live) or defuse (CT, planted) this player could perform now, if any. */
+  private bombAction(p: PlayerConn): { inZone: boolean; ticks: number; complete: () => void } | null {
     if (p.team === 'T' && p.hasBomb && this.phase === 'live') {
-      const onSite = this.map.siteAt(p.pos.x, p.pos.y) !== null;
-      if (using && onSite && !moving && p.alive) {
-        if (p.actionStartTick === 0) p.actionStartTick = this.tick;
-        if (this.tick - p.actionStartTick >= sec(this.times.plant)) this.plantBomb(p);
-      } else {
-        p.actionStartTick = 0;
-      }
-      return;
+      return {
+        inZone: this.map.siteAt(p.pos.x, p.pos.y) !== null,
+        ticks: sec(this.times.plant),
+        complete: () => this.plantBomb(p),
+      };
     }
-
-    // defusing
     if (p.team === 'CT' && this.phase === 'planted') {
-      const nearBomb = dist(p.pos, this.bomb.pos) <= DEFUSE_RADIUS;
-      if (using && nearBomb && !moving && p.alive) {
-        if (p.actionStartTick === 0) p.actionStartTick = this.tick;
-        const needed = sec(p.hasKit ? this.times.defuseKit : this.times.defuse);
-        if (this.tick - p.actionStartTick >= needed) this.defuseBomb();
-      } else {
-        p.actionStartTick = 0;
-      }
-      return;
+      return {
+        inZone: dist(p.pos, this.bomb.pos) <= DEFUSE_RADIUS,
+        ticks: sec(p.hasKit ? this.times.defuseKit : this.times.defuse),
+        complete: () => this.defuseBomb(),
+      };
     }
-
-    p.actionStartTick = 0;
+    return null;
   }
 
   private plantBomb(p: PlayerConn): void {
@@ -1096,14 +1101,16 @@ export class Room {
           if (input.w) this.switchSlot(p, input.w);
           if (input.b & BTN.RELOAD) this.startReload(p);
           if ((input.b & BTN.DROP) !== 0 && (p.prevButtons & BTN.DROP) === 0) this.dropActiveWeapon(p);
+          const before = p.pos;
           if (canMove) {
             p.pos = stepMovement(p.pos, buttonsToMove(input.b), activeWeapon(p).mobility, this.map, TICK_DT);
           }
+          const moved = dist(before, p.pos) > MOVE_EPSILON;
           if (input.b & BTN.ATTACK) {
             if (p.activeSlot === 4) this.throwGrenade(p, input);
             else this.tryFire(p, input);
           }
-          this.updatePlantDefuse(p, input);
+          this.updatePlantDefuse(p, input, moved);
         }
         p.prevButtons = input.b;
         p.buttons = input.b;
