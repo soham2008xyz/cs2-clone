@@ -452,7 +452,7 @@ export class Room {
       this.buyEquipment(p, item);
       return;
     }
-    const grenadeDef = GRENADES[item as GrenadeKind];
+    const grenadeDef = Object.hasOwn(GRENADES, item) ? GRENADES[item as GrenadeKind] : undefined;
     if (grenadeDef) {
       this.buyGrenade(p, item, grenadeDef);
       return;
@@ -486,7 +486,7 @@ export class Room {
   }
 
   private buyWeapon(p: PlayerConn, item: string): void {
-    if (!(item in WEAPONS)) return; // unknown item id — ignore rather than throw
+    if (!Object.hasOwn(WEAPONS, item)) return; // unknown item id — ignore rather than throw
     const w = getWeapon(item.replace(/[^a-z0-9]/g, ''));
     if (w.cls === 'knife') return;
     if (w.team && w.team !== p.team) return;

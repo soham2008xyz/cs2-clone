@@ -25,7 +25,7 @@ export const GRENADES: Record<GrenadeKind, GrenadeDef> = {
 };
 
 export const getGrenade = (id: string): GrenadeDef => {
-  const g = GRENADES[id as GrenadeKind];
+  const g = Object.hasOwn(GRENADES, id) ? GRENADES[id as GrenadeKind] : undefined;
   if (!g) throw new Error(`unknown grenade: ${id}`);
   return g;
 };

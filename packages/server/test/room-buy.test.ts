@@ -184,3 +184,22 @@ describe('handleBuy: weapons', () => {
     expect(t.reloadEndTick).toBe(0);
   });
 });
+
+describe('handleBuy: inherited property ids', () => {
+  it.each(['constructor', 'toString', '__proto__', 'hasOwnProperty'])('ignores %s', (item) => {
+    const room = liveRoom();
+    const t = room.addPlayer(null, 'T1', 'T');
+    room.addPlayer(null, 'CT1', 'CT');
+    stepUntil(room, () => room.phase === 'freeze');
+    t.money = 3000;
+    const nades = [...t.nades];
+    const primary = t.primary;
+    const secondary = t.secondary;
+
+    room.handleBuy(t.id, item);
+    expect(t.money).toBe(3000);
+    expect(t.nades).toEqual(nades);
+    expect(t.primary).toBe(primary);
+    expect(t.secondary).toBe(secondary);
+  });
+});

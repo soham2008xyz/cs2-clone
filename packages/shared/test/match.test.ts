@@ -100,6 +100,8 @@ describe('economy', () => {
 
   it('clampMoney bounds to [0, MAX_MONEY]', () => {
     expect(clampMoney(-500)).toBe(0);
+    expect(clampMoney(NaN)).toBe(0);
+    expect(clampMoney(Infinity)).toBe(0);
     expect(clampMoney(9000)).toBe(9000);
     expect(clampMoney(MAX_MONEY + 5000)).toBe(MAX_MONEY);
   });

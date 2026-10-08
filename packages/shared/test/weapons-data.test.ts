@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { WEAPONS } from '../src/sim/weapons.data.js';
+import { getWeapon, WEAPONS } from '../src/sim/weapons.data.js';
+
+describe('getWeapon', () => {
+  it('throws for ids inherited from Object.prototype', () => {
+    for (const id of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+      expect(() => getWeapon(id)).toThrow();
+    }
+  });
+});
 
 describe('weapon data sanity', () => {
   for (const w of Object.values(WEAPONS)) {

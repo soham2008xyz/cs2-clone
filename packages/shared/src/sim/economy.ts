@@ -31,7 +31,7 @@ export const winReward = (reason: RoundEndReason): number => {
 export const lossBonus = (streak: number): number =>
   LOSS_BONUS[Math.max(0, Math.min(LOSS_BONUS.length - 1, streak - 1))];
 
-export const clampMoney = (m: number): number => Math.max(0, Math.min(MAX_MONEY, m));
+export const clampMoney = (m: number): number => Number.isFinite(m) ? Math.max(0, Math.min(MAX_MONEY, m)) : 0;
 
 export interface LossStreaks {
   T: number;
