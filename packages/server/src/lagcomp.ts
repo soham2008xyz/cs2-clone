@@ -2,6 +2,8 @@ import { INTERP_DELAY_MS, TICK_RATE, type Vec2 } from '@cs2d/shared';
 
 const HISTORY_TICKS = TICK_RATE; // 1 second
 export const INTERP_DELAY_TICKS = Math.round((INTERP_DELAY_MS / 1000) * TICK_RATE);
+/** Furthest back a shot may be checked: 200 ms of latency plus the interpolation delay. */
+export const MAX_REWIND_TICKS = Math.round(0.2 * TICK_RATE) + INTERP_DELAY_TICKS;
 
 interface Frame {
   tick: number;
@@ -32,9 +34,14 @@ export class LagCompensator {
    */
   rewind(clientSeenTick: number | undefined, currentTick: number): Map<number, Vec2> | null {
     if (this.frames.length === 0) return null;
-    const target = clientSeenTick === undefined
+    // the client picks `clientSeenTick`, so ignore non-finite values and cap how far back it can reach
+    const target = clientSeenTick === undefined || !Number.isFinite(clientSeenTick)
       ? currentTick
-      : Math.max(this.frames[0].tick, Math.min(currentTick, clientSeenTick - INTERP_DELAY_TICKS));
+      : Math.max(
+          this.frames[0].tick,
+          currentTick - MAX_REWIND_TICKS,
+          Math.min(currentTick, clientSeenTick - INTERP_DELAY_TICKS),
+        );
     // find nearest recorded frame ≤ target
     for (let i = this.frames.length - 1; i >= 0; i--) {
       if (this.frames[i].tick <= target) return this.frames[i].positions;
