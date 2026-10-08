@@ -27,18 +27,6 @@ function liveRoom(timings = FAST): Room {
   return new Room('testarena', timings);
 }
 
-describe('handleBuy: prototype keys', () => {
-  it.each(['__proto__', 'constructor', 'toString', 'hasOwnProperty'])('ignores %s as an item id', (item) => {
-    const room = liveRoom();
-    const t = room.addPlayer(null, 'T1', 'T');
-    room.addPlayer(null, 'CT1', 'CT');
-    stepUntil(room, () => room.phase === 'freeze');
-    const money = t.money;
-    room.handleBuy(t.id, item);
-    expect(t.money).toBe(money);
-  });
-});
-
 describe('handleBuy: window & buyzone gating', () => {
   it('rejects a buy while outside the buyzone', () => {
     const room = liveRoom();
@@ -194,5 +182,24 @@ describe('handleBuy: weapons', () => {
     expect(t.money).toBe(3000 - 2700);
     expect(t.activeSlot).toBe(1);
     expect(t.reloadEndTick).toBe(0);
+  });
+});
+
+describe('handleBuy: inherited property ids', () => {
+  it.each(['constructor', 'toString', '__proto__', 'hasOwnProperty'])('ignores %s', (item) => {
+    const room = liveRoom();
+    const t = room.addPlayer(null, 'T1', 'T');
+    room.addPlayer(null, 'CT1', 'CT');
+    stepUntil(room, () => room.phase === 'freeze');
+    t.money = 3000;
+    const nades = [...t.nades];
+    const primary = t.primary;
+    const secondary = t.secondary;
+
+    room.handleBuy(t.id, item);
+    expect(t.money).toBe(3000);
+    expect(t.nades).toEqual(nades);
+    expect(t.primary).toBe(primary);
+    expect(t.secondary).toBe(secondary);
   });
 });

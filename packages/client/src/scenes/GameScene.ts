@@ -7,7 +7,6 @@ import {
   PFLAG,
   TICK_MS,
   TICK_RATE,
-  visibilityPolygon,
   WEAPONS,
   type GrenadeKind,
   type CompiledMap,
@@ -27,11 +26,16 @@ import { nadeColor, teamChatColor } from './presentation.js';
 import { sfx } from '../audio/sfx.js';
 import { toggleMute, unlockAudio } from '../audio/synth.js';
 import { appendChatLine, initChat } from '../chat.js';
+import { closeMessage } from '../net/closeReasons.js';
 import { Connection, serverUrl } from '../net/connection.js';
 import { Predictor } from '../net/prediction.js';
 import { SnapshotBuffer, type RemoteState } from '../net/interpolation.js';
 import { renderMap } from '../render/mapRender.js';
+import { VisionCache } from '../render/visionCache.js';
 import { session } from '../session.js';
+
+/** How long the disconnect message stays up before the player returns to the menu. */
+const SESSION_END_DELAY_MS = 3000;
 
 interface Entity {
   sprite: Phaser.GameObjects.Sprite;
@@ -72,6 +76,7 @@ export class GameScene extends Phaser.Scene {
   private enemyLayer!: Phaser.GameObjects.Container;
   private friendLayer!: Phaser.GameObjects.Container;
   private visionGfx!: Phaser.GameObjects.Graphics;
+  private readonly visionCache = new VisionCache();
   private darkness!: Phaser.GameObjects.Graphics;
   private tracerGfx!: Phaser.GameObjects.Graphics;
   private shotFxMask!: Phaser.Display.Masks.GeometryMask;
@@ -93,6 +98,10 @@ export class GameScene extends Phaser.Scene {
   private spectateIndex = 0;
   private spectateTarget = -1;
   private chatOpen = false;
+  private ending = false;
+  private buyOpen = false;
+  /** Set when the buy menu closes under a held click, so that click never turns into a shot. */
+  private attackLatched = false;
   private pingTimer?: Phaser.Time.TimerEvent;
   private listener = { x: 0, y: 0 }; // positional-audio ear (camera subject)
   private nextBeepAt = 0;
@@ -104,6 +113,8 @@ export class GameScene extends Phaser.Scene {
 
   create(): void {
     (window as unknown as { __scene: GameScene }).__scene = this; // debug/testing handle
+    this.buyOpen = false; // scene instances are reused on restart
+    this.attackLatched = false;
     this.map = getMap(session.map);
     this.predictor = new Predictor(this.map);
     renderMap(this, this.map);
@@ -153,10 +164,12 @@ export class GameScene extends Phaser.Scene {
     this.game.events.on('buy', this.onBuy, this);
     this.game.events.on('chat:send', this.onChatSend, this);
     this.game.events.on('chat:toggle', this.onChatToggle, this);
+    this.game.events.on('buy:toggle', this.onBuyToggle, this);
     this.events.once('shutdown', () => {
       this.game.events.off('buy', this.onBuy, this);
       this.game.events.off('chat:send', this.onChatSend, this);
       this.game.events.off('chat:toggle', this.onChatToggle, this);
+      this.game.events.off('buy:toggle', this.onBuyToggle, this);
       this.pingTimer?.destroy();
     });
 
@@ -228,9 +241,7 @@ export class GameScene extends Phaser.Scene {
       }
       for (const ev of msg.ev ?? []) this.handleEvent(ev);
     };
-    this.conn.onClose = () => {
-      this.statusText.setText('disconnected from server').setVisible(true);
-    };
+    this.conn.onClose = (code, reason) => this.endSession(closeMessage(code, reason));
     this.conn.onChat = (msg) => {
       appendChatLine(msg.from, msg.text, teamChatColor(msg.team));
     };
@@ -250,8 +261,17 @@ export class GameScene extends Phaser.Scene {
         });
       })
       .catch(() => {
-        this.statusText.setText('cannot reach server — start it with: npm run dev:server').setVisible(true);
+        this.endSession('cannot reach server — start it with: npm run dev:server');
       });
+  }
+
+  /** Shows why the session ended, then hands the player back to the menu (once). */
+  private endSession(message: string): void {
+    if (this.ending) return;
+    this.ending = true;
+    this.statusText.setText(message).setVisible(true);
+    this.pingTimer?.destroy();
+    this.time.delayedCall(SESSION_END_DELAY_MS, () => this.game.events.emit('session:end', message));
   }
 
   private onChatSend(text: string): void {
@@ -260,6 +280,11 @@ export class GameScene extends Phaser.Scene {
 
   private onChatToggle(open: boolean): void {
     this.chatOpen = open;
+  }
+
+  private onBuyToggle(open: boolean): void {
+    this.buyOpen = open;
+    if (!open && this.input.activePointer.isDown) this.attackLatched = true;
   }
 
   private nameOf(id: number): string {
@@ -497,9 +522,12 @@ export class GameScene extends Phaser.Scene {
     this.drawTracers();
   }
 
-  /** Buttons currently held (nothing while typing in chat). */
+  /** Buttons currently held (nothing while typing in chat, no attack while buying). */
   private pollButtons(): number {
     if (this.chatOpen) return 0;
+    // clicks belong to the buy menu while it is open; a click held across its close stays muted
+    if (!this.input.activePointer.isDown) this.attackLatched = false;
+    const attack = this.input.activePointer.isDown && !this.buyOpen && !this.attackLatched;
     const held: Array<[boolean, number]> = [
       [this.keys.W.isDown, BTN.UP],
       [this.keys.S.isDown, BTN.DOWN],
@@ -509,7 +537,7 @@ export class GameScene extends Phaser.Scene {
       [this.keys.R.isDown, BTN.RELOAD],
       [this.keys.E.isDown, BTN.USE],
       [this.keys.G.isDown, BTN.DROP],
-      [this.input.activePointer.isDown, BTN.ATTACK],
+      [attack, BTN.ATTACK],
     ];
     let buttons = 0;
     for (const [down, bit] of held) if (down) buttons |= bit;
@@ -713,7 +741,8 @@ export class GameScene extends Phaser.Scene {
 
   /** Vision polygon from the camera's subject (smoke blocks LOS same as walls). */
   private drawVision(origin: Vec2, smokeOccluders: Occluder[]): void {
-    const poly = visibilityPolygon(origin, this.map, smokeOccluders);
+    const { poly, changed } = this.visionCache.update(origin, this.map, smokeOccluders);
+    if (!changed) return;
     this.visionGfx.clear();
     this.visionGfx.fillStyle(0xffffff, 1);
     this.visionGfx.beginPath();

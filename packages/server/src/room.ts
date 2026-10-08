@@ -458,7 +458,7 @@ export class Room {
       this.buyEquipment(p, item);
       return;
     }
-    const grenadeDef = Object.hasOwn(GRENADES, item) ? GRENADES[item as GrenadeKind] : undefined; // hasOwn: 'constructor' / '__proto__' are not items
+    const grenadeDef = Object.hasOwn(GRENADES, item) ? GRENADES[item as GrenadeKind] : undefined;
     if (grenadeDef) {
       this.buyGrenade(p, item, grenadeDef);
       return;

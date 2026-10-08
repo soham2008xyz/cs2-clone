@@ -133,6 +133,18 @@ describe('vision', () => {
     expect(hasLineOfSight(at(2, 7), at(10, 7), map, [smoke])).toBe(true);
   });
 
+  it('visibilityPolygon reuses the out array and points', () => {
+    const origin = at(2, 6);
+    const out: Array<{ x: number; y: number }> = [];
+    const a = visibilityPolygon(origin, map, [], undefined, out);
+    expect(a).toBe(out);
+    const firstPt = out[0];
+    const expected = visibilityPolygon(at(3, 6), map);
+    visibilityPolygon(at(3, 6), map, [], undefined, out);
+    expect(out[0]).toBe(firstPt);
+    expect(out).toEqual(expected);
+  });
+
   it('visibility polygon stays within walls', () => {
     const origin = at(2, 6);
     const poly = visibilityPolygon(origin, map);

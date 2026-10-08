@@ -129,6 +129,12 @@ describe('HudScene timer and scores', () => {
     expect(hud.teamHintText.visible).toBe(false);
   });
 
+  it('announces buy menu open/close to other scenes', () => {
+    hud.input.keyboard.emit('keydown-B');
+    hud.input.keyboard.emit('keydown-B');
+    expect(hud.game.events.payloads('buy:toggle')).toEqual([[true], [false]]);
+  });
+
   it('closes an open buy menu once buying is no longer allowed', () => {
     hud.input.keyboard.emit('keydown-B');
     expect(hud.buyOpen).toBe(true);

@@ -197,6 +197,7 @@ export class HudScene extends Phaser.Scene {
     this.buyOpen = !this.buyOpen;
     if (this.buyOpen && this.lastSelf) this.buildBuyPanel(this.lastSelf.team);
     this.buyPanel.setVisible(this.buyOpen);
+    this.game.events.emit('buy:toggle', this.buyOpen);
     this.layout();
   }
 
