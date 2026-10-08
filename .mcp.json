@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "sonarqube": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "dotenv-cli@latest",
+        "--",
+        "sh",
+        "-c",
+        "exec npx -y mcp-remote https://api.sonarcloud.io/mcp --header \"Authorization: Bearer $SONARQUBE_TOKEN\" --header \"SONARQUBE_ORG: soham2008xyz\""
+      ]
+    }
+  }
+}
