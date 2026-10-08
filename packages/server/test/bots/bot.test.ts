@@ -65,6 +65,16 @@ describe('BotController (structural smoke tests)', () => {
     expect(bot.money).toBeLessThan(startingMoney);
   });
 
+  it('sends no client-seen tick, so its shots use current target positions', () => {
+    const room = new Room(botTestMap(), FAST);
+    const bot = room.addBot('T', 'normal');
+    room.addPlayer(null, 'Human', 'CT');
+    stepUntil(room, () => room.phase === 'live');
+    step(room, 30);
+    expect(bot.lastSeq).toBeGreaterThan(0); // the bot has sent inputs
+    expect(bot.lastSeenTick).toBeUndefined();
+  });
+
   it('moves toward its goal when no enemy is visible', () => {
     const mapName = botTestMap();
     const room = new Room(mapName, FAST);
