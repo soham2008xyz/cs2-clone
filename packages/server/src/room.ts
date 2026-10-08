@@ -82,7 +82,10 @@ import { BotController, type BotDifficulty } from './bots/bot.js';
 import { LagCompensator } from './lagcomp.js';
 
 const SNAPSHOT_EVERY = Math.round(TICK_RATE / SNAPSHOT_RATE);
-const MAX_QUEUED_INPUTS = 8;
+/** Inputs kept per player; sized to hold a full client catch-up burst (250 ms of frames). */
+const MAX_QUEUED_INPUTS = 16;
+/** Movement credit cap. Credit refills 1 per tick, so movement stays capped at tick rate; the cap lets a stalled client catch up. */
+const MAX_MOVE_CREDIT = 15;
 const WARMUP_RESPAWN_TICKS = 3 * TICK_RATE;
 const MATCH_END_TICKS = 15 * TICK_RATE;
 const BOMB_EXPLOSION_RADIUS = 350;
@@ -147,6 +150,7 @@ export interface PlayerConn {
   lastSeq: number;
   lastSeenTick?: number;
   inputQueue: InputMsg[];
+  moveCredit: number; // movement steps the player may still take; +1 per tick
   respawnTick: number; // warmup only
   actionStartTick: number; // plant/defuse progress (0 = none)
   blindUntilTick: number; // 0 = not blinded
@@ -324,6 +328,7 @@ export class Room {
       prevButtons: 0,
       lastSeq: 0,
       inputQueue: [],
+      moveCredit: MAX_MOVE_CREDIT,
       respawnTick: 0,
       actionStartTick: 0,
       blindUntilTick: 0,
@@ -1161,7 +1166,13 @@ export class Room {
 
     const queue = p.inputQueue;
     p.inputQueue = [];
-    for (const input of queue) this.applyInput(p, input, canMove);
+    p.moveCredit = Math.min(MAX_MOVE_CREDIT, p.moveCredit + 1);
+    for (const input of queue) {
+      // Out of credit: aim, buttons and acks still apply, but the input moves nobody.
+      const mayMove = p.moveCredit >= 1;
+      if (mayMove) p.moveCredit--;
+      this.applyInput(p, input, canMove && mayMove);
+    }
 
     if (p.hasBomb) this.bomb.pos = p.pos;
 
