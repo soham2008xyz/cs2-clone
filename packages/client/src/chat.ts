@@ -3,6 +3,7 @@ let inputEl: HTMLInputElement;
 let onSend: ((text: string) => void) | null = null;
 let onToggle: ((open: boolean) => void) | null = null;
 let listenerAttached = false;
+let active = false; // true only while a match owns the chat overlay
 
 function openChat(): void {
   inputEl.style.display = 'block';
@@ -25,12 +26,14 @@ function closeChat(): void {
 export function initChat(sendCb: (text: string) => void, toggleCb: (open: boolean) => void): void {
   onSend = sendCb;
   onToggle = toggleCb;
+  active = true;
   logEl = document.getElementById('chat-log')!;
   inputEl = document.getElementById('chat-input') as HTMLInputElement;
   if (listenerAttached) return;
   listenerAttached = true;
 
   window.addEventListener('keydown', (e) => {
+    if (!active) return;
     if (document.activeElement === inputEl) {
       if (e.key === 'Enter') {
         const text = inputEl.value.trim();
@@ -47,6 +50,19 @@ export function initChat(sendCb: (text: string) => void, toggleCb: (open: boolea
       e.preventDefault();
     }
   });
+}
+
+/** Leaves the match: clears the log, hides the input and drops the scene callbacks. */
+export function teardownChat(): void {
+  active = false;
+  onSend = null;
+  onToggle = null;
+  logEl?.replaceChildren();
+  if (inputEl) {
+    inputEl.style.display = 'none';
+    inputEl.value = '';
+    inputEl.blur();
+  }
 }
 
 export function appendChatLine(from: string, text: string, color: string): void {

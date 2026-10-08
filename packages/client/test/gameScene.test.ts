@@ -410,3 +410,25 @@ describe('GameScene.applyRoster', () => {
     expect(g.game.events.payloads('hud:roster')).toHaveLength(1);
   });
 });
+
+describe('GameScene — connection loss', () => {
+  type Ending = GameInternals & { statusText: FakeObject; endSession(msg: string): void };
+
+  it('shows the message, then emits session:end with it after the delay — once', () => {
+    const s = g as Ending;
+    s.statusText = fakeObject();
+    const ended = vi.fn();
+    s.game.events.on('session:end', ended);
+
+    s.endSession('room not found');
+    s.endSession('disconnected from server'); // e.g. onerror then onclose
+    expect(methodsCalled(s.statusText)).toContain('setText');
+    expect(s.time.delayedCall).toHaveBeenCalledTimes(1);
+
+    const [delay, cb] = s.time.delayedCall.mock.calls[0] as [number, () => void];
+    expect(delay).toBeGreaterThan(0);
+    expect(ended).not.toHaveBeenCalled();
+    cb();
+    expect(ended).toHaveBeenCalledWith('room not found');
+  });
+});

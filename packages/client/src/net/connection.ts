@@ -17,14 +17,14 @@ export class Connection {
   onRoster: (msg: RosterMsg) => void = () => {};
   onChat: (msg: ChatBroadcastMsg) => void = () => {};
   onPong: (msg: PongMsg) => void = () => {};
-  onClose: () => void = () => {};
+  onClose: (code: number, reason: string) => void = () => {};
 
   connect(url: string): Promise<void> {
     return new Promise((resolve, reject) => {
       this.ws = new WebSocket(url);
       this.ws.onopen = () => resolve();
       this.ws.onerror = () => reject(new Error(`cannot reach ${url}`));
-      this.ws.onclose = () => this.onClose();
+      this.ws.onclose = (ev) => this.onClose(ev.code, ev.reason);
       this.ws.onmessage = (ev) => {
         const msg = decode<ServerMsg>(ev.data as string);
         if (msg.t === 's') this.onSnapshot(msg);
