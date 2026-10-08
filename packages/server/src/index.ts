@@ -3,7 +3,7 @@ import { createServer, type ServerResponse } from 'node:http';
 import { extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { decode, listMaps, type ClientMsg } from '@cs2d/shared';
+import { listMaps, parseClientMsg, type ClientMsg } from '@cs2d/shared';
 import { RoomManager } from './roomManager.js';
 import { parseRequestUrl, rawDataToString, resolveStaticFile, validDifficulty } from './serverUtils.js';
 
@@ -11,6 +11,7 @@ const PORT = Number(process.env.PORT ?? 8090);
 // CS2D_FAST=1 shrinks round timings for integration tests
 const FAST_TIMINGS = process.env.CS2D_FAST === '1' ? { freeze: 1, round: 20, bomb: 4, plant: 0.5, defuse: 1, defuseKit: 0.5, roundEnd: 1 } : {};
 const REAP_INTERVAL_MS = 30000;
+const MAX_WS_BYTES = 16 * 1024; // largest valid client message is ~1 KB of chat; ws closes the socket on anything bigger
 const MAX_BODY_BYTES = 16 * 1024; // POST /rooms bodies are tiny; reject anything larger
 
 const manager = new RoomManager();
@@ -112,9 +113,15 @@ const http = createServer(async (req, res) => {
   serveClient(url.pathname, res);
 });
 
-const wss = new WebSocketServer({ server: http });
+const wss = new WebSocketServer({ server: http, maxPayload: MAX_WS_BYTES });
 
 wss.on('connection', (ws: WebSocket, req) => {
+  // Register first: a protocol error (bad frame, oversized payload) must close this socket, not crash the process.
+  ws.on('error', (err) => {
+    console.warn(`[ws] socket error: ${err.message}`);
+    ws.terminate();
+  });
+
   const code = parseRequestUrl(req.url).searchParams.get('room') ?? '';
   const entry = manager.get(code);
   if (!entry) {
@@ -125,13 +132,7 @@ wss.on('connection', (ws: WebSocket, req) => {
   let playerId: number | null = null;
   let playerTeam: import('@cs2d/shared').TeamId | null = null;
 
-  ws.on('message', (raw) => {
-    let msg: ClientMsg;
-    try {
-      msg = decode<ClientMsg>(rawDataToString(raw));
-    } catch {
-      return;
-    }
+  const dispatch = (msg: ClientMsg): void => {
     if (msg.t === 'join' && playerId === null) {
       const p = room.addPlayer(ws, msg.name, msg.team);
       playerId = p.id;
@@ -155,6 +156,16 @@ wss.on('connection', (ws: WebSocket, req) => {
       room.broadcastChat(name, playerTeam, msg.text);
     } else if (msg.t === 'ping') {
       ws.send(JSON.stringify({ t: 'pong', t0: msg.t0 }));
+    }
+  };
+
+  ws.on('message', (raw) => {
+    const msg = parseClientMsg(rawDataToString(raw));
+    if (!msg) return; // drop malformed messages
+    try {
+      dispatch(msg);
+    } catch (err) {
+      console.error(`[room ${meta.code}] message handler failed:`, err);
     }
   });
 
