@@ -20,6 +20,7 @@ export interface InputMsg {
   a: number; // aim angle (radians)
   w?: number; // switch to slot (1=primary 2=secondary 3=knife 4=grenade cycle)
   k?: number; // latest server tick the client has seen (drives lag compensation)
+  sp?: number; // dead players: id of the teammate being spectated (the server sends only that view)
 }
 
 export interface JoinMsg {
@@ -211,6 +212,10 @@ export function validateClientMsg(v: unknown): ClientMsg | null {
       if (v.k !== undefined) {
         if (!isNum(v.k)) return null;
         msg.k = v.k;
+      }
+      if (v.sp !== undefined) {
+        if (!Number.isInteger(v.sp) || (v.sp as number) < 0) return null;
+        msg.sp = v.sp as number;
       }
       return msg;
     }

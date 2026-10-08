@@ -65,7 +65,7 @@ The core idea: **`packages/shared` is a deterministic, dependency-free simulatio
 - Phaser scenes: `BootScene` → `GameScene` (world, input, networking glue; the biggest file) + `HudScene` (overlay). The room list, create/join and chat are an HTML overlay (`menu.ts`, `chat.ts`), not Phaser.
 - `net/prediction.ts`: `Predictor` applies each input locally with the shared `stepMovement`, then on each snapshot resets to the server position and replays inputs newer than `ack`. `net/interpolation.ts` renders remote players about `INTERP_DELAY_MS` in the past.
 - `net/api.ts` and `net/connection.ts` assume the server is on `:8090` when the page is on `:5173` (dev). Otherwise they use the page origin (prod single-server).
-- Fog of war is a visibility polygon from `shared/sim/vision.ts`, drawn client-side. Smoke zones block it.
+- Fog of war is a visibility polygon from `shared/sim/vision.ts`, drawn client-side. Smoke zones block it. The server also filters each snapshot per recipient (`broadcastSnapshot`, `server/src/visibility.ts`), so hidden enemies never reach the client.
 
 ### Maps
 

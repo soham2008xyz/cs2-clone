@@ -24,9 +24,10 @@ export class Predictor {
 
   constructor(private readonly map: CompiledMap) {}
 
-  buildInput(buttons: number, aim: number, lastServerTick: number, switchSlot?: number): InputMsg {
+  buildInput(buttons: number, aim: number, lastServerTick: number, switchSlot?: number, spectating?: number): InputMsg {
     const msg: InputMsg = { t: 'i', s: ++this.seq, b: buttons, a: aim, k: lastServerTick };
     if (switchSlot) msg.w = switchSlot;
+    if (spectating !== undefined) msg.sp = spectating;
     return msg;
   }
 
