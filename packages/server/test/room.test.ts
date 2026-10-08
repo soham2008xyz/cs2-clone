@@ -571,6 +571,37 @@ describe('plant/defuse interruption', () => {
     expect(ct.actionStartTick).toBe(0);
   });
 
+  it('plants while holding a direction into a wall (pinned in place, not moving)', () => {
+    const room = new Room('dust2', FAST);
+    const send = feeder(room);
+    const t = room.addPlayer(null, 'T1', 'T');
+    room.addPlayer(null, 'CT1', 'CT');
+    stepUntil(room, () => room.phase === 'live');
+
+    // a site tile whose northern neighbour is solid, so holding UP pins the player there
+    const { map } = room;
+    let tile: { x: number; y: number } | null = null;
+    for (let ty = 0; ty < map.height && !tile; ty++) {
+      for (let tx = 0; tx < map.width && !tile; tx++) {
+        const cx = (tx + 0.5) * 32;
+        const cy = (ty + 0.5) * 32;
+        if (map.siteAt(cx, cy) !== null && map.isSolid(tx, ty - 1)) tile = { x: cx, y: cy };
+      }
+    }
+    expect(tile).not.toBeNull();
+    t.pos = { ...tile! };
+
+    stepUntil(
+      room,
+      () => {
+        send(t.id, BTN.USE | BTN.UP);
+        return room.phase === 'planted';
+      },
+      120,
+    );
+    expect(room.phase).toBe('planted');
+  });
+
   it('rejects planting off-site regardless of how long USE is held', () => {
     const { room, send } = liveRoom();
     const t = room.addPlayer(null, 'T1', 'T');
