@@ -21,18 +21,23 @@ updates:
         update-types:
           - "minor"
           - "patch"
+      # vitest and @vitest/* pin each other to the exact same version, so they
+      # must move together on every update type, majors included.
       test-group:
         patterns:
           - "vitest"
-        update-types:
-          - "minor"
-          - "patch"
+          - "@vitest/*"
       vite-group:
         patterns:
           - "vite"
         update-types:
           - "minor"
           - "patch"
+    ignore:
+      # Phaser 4 is a renderer rewrite; migrating is a deliberate project, not a bump.
+      - dependency-name: "phaser"
+        update-types:
+          - "version-update:semver-major"
     labels:
       - "dependencies"
 
