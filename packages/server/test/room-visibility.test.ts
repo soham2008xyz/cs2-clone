@@ -127,14 +127,18 @@ describe('per-recipient snapshots (fog of war)', () => {
     expect(ids(s.rec.t1)).toContain(s.ct1.id);
   });
 
-  it('keeps sending an enemy for the grace window after sight breaks, then drops it', () => {
+  it('replays the last seen position during the grace window, never live hidden state', () => {
     const s = setup();
     const seen = openPoint(base);
     place(s, { t1: base, t2: base, ct1: seen });
     expect(ids(s.rec.t1)).toContain(s.ct1.id);
-    s.ct1.pos = walledOffPoint(base);
+    const hiddenAt = walledOffPoint(base);
+    s.ct1.pos = hiddenAt;
     step(s.room, 2);
-    expect(ids(s.rec.t1)).toContain(s.ct1.id); // still inside the grace window
+    const during = last(s.rec.t1).p.find((q) => q[0] === s.ct1.id);
+    expect(during).toBeDefined(); // still inside the grace window
+    expect(during![1]).toBeCloseTo(seen.x, 0); // the old position
+    expect(during![2]).toBeCloseTo(seen.y, 0);
     step(s.room, VIS_GRACE_TICKS + 4);
     expect(ids(s.rec.t1)).not.toContain(s.ct1.id);
   });
@@ -148,16 +152,33 @@ describe('per-recipient snapshots (fog of war)', () => {
     expect(ids(s.rec.t2)).toContain(s.t1.id);
   });
 
-  it('a dead player sees what a living teammate sees (spectating)', () => {
+  it('a dead player gets only the view of the teammate they spectate', () => {
     const s = setup();
+    const rec3 = fakeWs();
+    const t3 = s.room.addPlayer(rec3.ws, 'T3', 'T');
     const enemy = openPoint(base);
-    place(s, { t1: walledOffPoint(enemy), t2: base, ct1: enemy });
+    const elsewhere = walledOffPoint(enemy);
+    t3.alive = true; // joined mid-round, so revive for the test
+    t3.pos = { ...base };
+    place(s, { t1: elsewhere, t2: base, ct1: enemy });
+    s.t1.pos = { ...elsewhere };
+    t3.pos = { ...elsewhere };
+    step(s.room, VIS_GRACE_TICKS + 4);
     expect(ids(s.rec.t1)).not.toContain(s.ct1.id); // alive T1 can't see CT1
+    expect(ids(rec3)).not.toContain(s.ct1.id);
     expect(ids(s.rec.t2)).toContain(s.ct1.id);
     s.t1.alive = false;
+    const seq = (n: number) => ({ t: 'i' as const, s: n, b: 0, a: 0 });
+    s.room.handleInput(s.t1.id, { ...seq(1), sp: s.t2.id });
     step(s.room, 4);
-    expect(ids(s.rec.t1)).toContain(s.ct1.id); // dead T1 now borrows T2's view
+    expect(ids(s.rec.t1)).toContain(s.ct1.id); // follows T2, who sees CT1
     expect(ids(s.rec.t1)).toContain(s.t2.id);
+    s.room.handleInput(s.t1.id, { ...seq(2), sp: t3.id });
+    step(s.room, VIS_GRACE_TICKS + 4);
+    expect(ids(s.rec.t1)).not.toContain(s.ct1.id); // follows T3, who doesn't; T2's view is not shared
+    s.room.handleInput(s.t1.id, { ...seq(3), sp: 9999 }); // bogus target: falls back to a living teammate
+    step(s.room, 4);
+    expect(ids(s.rec.t1)).toContain(s.t1.id);
   });
 
   it('filters shot and nade_throw events from hidden enemies only', () => {

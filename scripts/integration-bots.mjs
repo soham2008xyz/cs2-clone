@@ -93,7 +93,8 @@ async function main() {
       state.match = msg.m;
       for (const ev of msg.ev ?? []) {
         if (ev.e === 'round_end') state.rounds.push(ev);
-        if (ev.e === 'nade_throw') state.nadeThrows++;
+        // throws from enemies out of sight are filtered server-side; pops and fires are public
+        if (['nade_throw', 'he_pop', 'flash_pop', 'smoke_pop', 'molotov_ignite'].includes(ev.e)) state.nadeThrows++;
       }
     }
   });

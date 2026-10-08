@@ -57,6 +57,7 @@ import {
   TILE_SIZE,
   traceShot,
   WEAPONS,
+  canSeeBody,
   type CombatTarget,
   type CompiledMap,
   type GameEvent,
@@ -80,7 +81,7 @@ import {
 } from '@cs2d/shared';
 import { BotController, type BotDifficulty } from './bots/bot.js';
 import { LagCompensator } from './lagcomp.js';
-import { canSeeBody, VisibilityMemory } from './visibility.js';
+import { VisibilityMemory } from './visibility.js';
 
 const SNAPSHOT_EVERY = Math.round(TICK_RATE / SNAPSHOT_RATE);
 const MAX_QUEUED_INPUTS = 8;
@@ -147,6 +148,7 @@ export interface PlayerConn {
   prevButtons: number;
   lastSeq: number;
   lastSeenTick?: number;
+  spectateId?: number; // dead: teammate whose view this client shows
   inputQueue: InputMsg[];
   respawnTick: number; // warmup only
   actionStartTick: number; // plant/defuse progress (0 = none)
@@ -252,7 +254,7 @@ export class Room {
   private readonly rng = mulberry32(0xc0ffee);
   private readonly lagComp = new LagCompensator();
   private events: Array<{ ev: GameEvent; to?: number; src?: number }> = [];
-  private readonly visibility = new VisibilityMemory();
+  private readonly visibility = new VisibilityMemory<PlayerSnap>();
 
   readonly times: RoomTimings;
 
@@ -1186,6 +1188,7 @@ export class Room {
   private applyInput(p: PlayerConn, input: InputMsg, canMove: boolean): void {
     p.lastSeq = input.s;
     if (input.k !== undefined) p.lastSeenTick = input.k;
+    p.spectateId = Number.isInteger(input.sp) ? input.sp : undefined;
     if (!Number.isFinite(input.a)) input.a = p.aim; // reject NaN/Infinity aim (would poison grenade velocity / shot tracing)
     p.aim = input.a;
     if (p.alive) this.applyAliveInput(p, input, canMove);
@@ -1276,13 +1279,15 @@ export class Room {
   }
 
   /**
-   * Where a recipient's eyes are. Alive: their own position. Dead: every living
-   * teammate (the client spectates one of them, and the server does not know which).
+   * Where a recipient's eyes are. Alive: their own position. Dead: the teammate
+   * they spectate (`sp` from the client), else the first living teammate.
+   * Never the whole team, or a dead client could read every teammate's view.
    */
   private vantagesFor(p: PlayerConn): Vec2[] {
     if (p.alive) return [p.pos];
-    const mates = [...this.players.values()].filter((q) => q.alive && q.team === p.team).map((q) => q.pos);
-    return mates.length > 0 ? mates : [p.pos];
+    const mates = [...this.players.values()].filter((q) => q.alive && q.team === p.team);
+    const target = mates.find((q) => q.id === p.spectateId) ?? mates[0];
+    return [target ? target.pos : p.pos];
   }
 
   /** Send each client only what it could see: its team, plus enemies in sight (fog of war enforced server-side). */
@@ -1304,12 +1309,19 @@ export class Room {
     for (const p of this.players.values()) {
       if (!p.ws) continue;
       const vantages = this.vantagesFor(p);
-      const enemies = [...this.players.values()].filter((q) => q.team !== p.team);
+      const enemies = [...this.players.values()]
+        .filter((q) => q.team !== p.team)
+        .map((q) => ({ id: q.id, pos: q.pos, snap: snaps.get(q.id)! }));
       const seen = this.visibility.visible(p.id, vantages, enemies, this.map, smokes, this.tick);
 
       const players: PlayerSnap[] = [];
       for (const q of this.players.values()) {
-        if (q.team === p.team || q.id === p.id || (q.alive && seen.has(q.id))) players.push(snaps.get(q.id)!);
+        if (q.team === p.team || q.id === p.id) {
+          players.push(snaps.get(q.id)!);
+          continue;
+        }
+        const sighting = seen.get(q.id);
+        if (sighting && (sighting.snap[5] & PFLAG.ALIVE) !== 0) players.push(sighting.snap);
       }
       const items: GroundItem[] = [];
       for (const [id, it] of allItems) {
@@ -1327,7 +1339,7 @@ export class Room {
         if (e.to !== undefined && e.to !== p.id) continue;
         if (e.src !== undefined) {
           const src = this.players.get(e.src);
-          if (src && src.team !== p.team && !seen.has(src.id)) continue; // hidden enemy's shot or throw
+          if (src && src.team !== p.team && !seen.get(src.id)?.live) continue; // hidden enemy's shot or throw
         }
         ev.push(e.ev);
       }

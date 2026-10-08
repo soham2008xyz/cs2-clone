@@ -1,4 +1,4 @@
-import { TILE_SIZE } from '../constants.js';
+import { PLAYER_RADIUS, TILE_SIZE } from '../constants.js';
 import { dist, fromAngle, raycastGrid, rayCircle, type Vec2 } from '../math.js';
 import type { CompiledMap } from '../map/types.js';
 
@@ -52,6 +52,27 @@ export function visibilityPolygon(
     }
   }
   return pts;
+}
+
+/** Vision range plus the body radius: a body whose edge is in range still counts as seen. */
+export const SEE_RANGE = VISION_RANGE + PLAYER_RADIUS;
+
+/**
+ * Can any vantage see a body at `target`? The one rule for what a player may
+ * know about: the server filters snapshots with it. Tests the body's center and
+ * both sides (perpendicular, one radius out) against walls and smoke.
+ */
+export function canSeeBody(vantages: readonly Vec2[], target: Vec2, map: CompiledMap, smokes: readonly Occluder[] = []): boolean {
+  for (const v of vantages) {
+    const d = dist(v, target);
+    if (d > SEE_RANGE) continue;
+    if (d === 0 || hasLineOfSight(v, target, map, smokes, SEE_RANGE)) return true;
+    const nx = (-(target.y - v.y) / d) * PLAYER_RADIUS;
+    const ny = ((target.x - v.x) / d) * PLAYER_RADIUS;
+    if (hasLineOfSight(v, { x: target.x + nx, y: target.y + ny }, map, smokes, SEE_RANGE)) return true;
+    if (hasLineOfSight(v, { x: target.x - nx, y: target.y - ny }, map, smokes, SEE_RANGE)) return true;
+  }
+  return false;
 }
 
 /** Line-of-sight between two points, blocked by walls and smoke. */
