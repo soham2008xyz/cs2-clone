@@ -56,3 +56,9 @@ export function clientIp(req: { headers: IncomingHttpHeaders; socket: { remoteAd
   }
   return req.socket.remoteAddress ?? 'unknown';
 }
+
+/** Non-negative integer from an env var, or `fallback` when unset or malformed. */
+export function envInt(env: Record<string, string | undefined>, name: string, fallback: number): number {
+  const n = Number.parseInt(env[name] ?? '', 10);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}

@@ -4,15 +4,11 @@ import { extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { listMaps, parseClientMsg, type ClientMsg } from '@cs2d/shared';
+import { createRoomResponse } from './createRoom.js';
 import { ConnectionLimiter } from './connectionLimits.js';
 import { KeyedRateLimiter } from './rateLimit.js';
-import { DEFAULT_MAX_ROOMS, RoomCapError, RoomManager } from './roomManager.js';
-import { clientIp, parseRequestUrl, rawDataToString, resolveStaticFile, validDifficulty } from './serverUtils.js';
-
-function envInt(name: string, fallback: number): number {
-  const n = Number.parseInt(process.env[name] ?? '', 10);
-  return Number.isFinite(n) && n >= 0 ? n : fallback;
-}
+import { DEFAULT_MAX_ROOMS, RoomManager } from './roomManager.js';
+import { clientIp, envInt, parseRequestUrl, rawDataToString, resolveStaticFile, validDifficulty } from './serverUtils.js';
 
 const PORT = Number(process.env.PORT ?? 8090);
 // CS2D_FAST=1 shrinks round timings for integration tests
@@ -21,11 +17,11 @@ const REAP_INTERVAL_MS = 30000;
 const MAX_WS_BYTES = 16 * 1024; // largest valid client message is ~1 KB of chat; ws closes the socket on anything bigger
 const MAX_BODY_BYTES = 16 * 1024; // POST /rooms bodies are tiny; reject anything larger
 
-const MAX_ROOMS = envInt('CS2D_MAX_ROOMS', DEFAULT_MAX_ROOMS);
-const CREATE_BURST = envInt('CS2D_CREATE_BURST', 10); // rooms one IP can create back to back
-const CREATE_PER_MIN = envInt('CS2D_CREATE_PER_MIN', 6); // sustained rooms per minute per IP
+const MAX_ROOMS = envInt(process.env, 'CS2D_MAX_ROOMS', DEFAULT_MAX_ROOMS);
+const CREATE_BURST = envInt(process.env, 'CS2D_CREATE_BURST', 10); // rooms one IP can create back to back
+const CREATE_PER_MIN = envInt(process.env, 'CS2D_CREATE_PER_MIN', 6); // sustained rooms per minute per IP
 // Render terminates TLS at its proxy, which appends the peer address to x-forwarded-for. Elsewhere the header is forgeable, so ignore it.
-const TRUSTED_PROXY_HOPS = envInt('CS2D_TRUSTED_PROXY_HOPS', process.env.RENDER ? 1 : 0);
+const TRUSTED_PROXY_HOPS = envInt(process.env, 'CS2D_TRUSTED_PROXY_HOPS', process.env.RENDER ? 1 : 0);
 
 const manager = new RoomManager(MAX_ROOMS);
 const createLimiter = new KeyedRateLimiter(CREATE_BURST, CREATE_PER_MIN / 60);
@@ -113,28 +109,15 @@ const http = createServer(async (req, res) => {
   }
 
   if (url.pathname === '/rooms' && req.method === 'POST') {
-    const ip = clientIp(req, TRUSTED_PROXY_HOPS);
-    if (!createLimiter.take(ip)) {
-      res.writeHead(429, { 'content-type': 'application/json', 'retry-after': String(createLimiter.retryAfterSec(ip)), ...cors });
-      res.end(JSON.stringify({ error: 'too many requests' }));
-      return;
-    }
-    try {
-      const body = (await readJsonBody(req)) as { map?: string; backfillBots?: boolean; botDifficulty?: string };
-      const map = listMaps().includes(body.map ?? '') ? (body.map as string) : 'dust2';
-      const botDifficulty = validDifficulty(body.botDifficulty);
-      const meta = manager.create(map, Boolean(body.backfillBots), FAST_TIMINGS, botDifficulty);
-      res.writeHead(200, { 'content-type': 'application/json', ...cors });
-      res.end(JSON.stringify({ code: meta.code, map: meta.map }));
-    } catch (err) {
-      if (err instanceof RoomCapError) {
-        res.writeHead(503, { 'content-type': 'application/json', 'retry-after': '30', ...cors });
-        res.end(JSON.stringify({ error: 'server full' }));
-        return;
-      }
-      res.writeHead(400, { 'content-type': 'application/json', ...cors });
-      res.end(JSON.stringify({ error: 'bad request' }));
-    }
+    const result = await createRoomResponse({
+      ip: clientIp(req, TRUSTED_PROXY_HOPS),
+      manager,
+      limiter: createLimiter,
+      timings: FAST_TIMINGS,
+      readBody: () => readJsonBody(req),
+    });
+    res.writeHead(result.status, { 'content-type': 'application/json', ...result.headers, ...cors });
+    res.end(JSON.stringify(result.body));
     return;
   }
 

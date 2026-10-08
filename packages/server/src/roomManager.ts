@@ -45,6 +45,10 @@ export class RoomManager {
 
   constructor(private readonly maxRooms = Infinity) {}
 
+  codes(): string[] {
+    return [...this.rooms.keys()];
+  }
+
   get size(): number {
     return this.rooms.size;
   }

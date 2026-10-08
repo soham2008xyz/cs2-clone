@@ -1,6 +1,6 @@
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { clientIp, parseRequestUrl, rawDataToString, resolveStaticFile, validDifficulty } from '../src/serverUtils.js';
+import { clientIp, envInt, parseRequestUrl, rawDataToString, resolveStaticFile, validDifficulty } from '../src/serverUtils.js';
 
 const ROOT = resolve('/srv/client/dist');
 
@@ -103,5 +103,18 @@ describe('clientIp', () => {
 
   it('joins repeated header values', () => {
     expect(clientIp(req(['6.6.6.6', '1.2.3.4']), 1)).toBe('1.2.3.4');
+  });
+});
+
+describe('envInt', () => {
+  it('parses a non-negative integer', () => {
+    expect(envInt({ N: '12' }, 'N', 5)).toBe(12);
+    expect(envInt({ N: '0' }, 'N', 5)).toBe(0);
+  });
+
+  it('falls back when unset, malformed or negative', () => {
+    expect(envInt({}, 'N', 5)).toBe(5);
+    expect(envInt({ N: 'abc' }, 'N', 5)).toBe(5);
+    expect(envInt({ N: '-3' }, 'N', 5)).toBe(5);
   });
 });
