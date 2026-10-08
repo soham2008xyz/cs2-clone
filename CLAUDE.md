@@ -18,7 +18,7 @@ npm start                 # single process: serves built client + game API on :8
 npm test                  # vitest in shared, server, client (in that order)
 npm run test:coverage     # same, with lcov for Sonar
 npm run test:integration  # scripts/integration-round.mjs + integration-bots.mjs (spawn a real server)
-npm run typecheck -w @cs2d/client
+npm run typecheck             # tsc --noEmit over src + test in all three packages
 ```
 
 Run one package, file or test:

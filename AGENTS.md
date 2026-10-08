@@ -12,7 +12,7 @@
 - Build: `npm run build` runs `@cs2d/client` build (Vite → `packages/client/dist/`) then `@cs2d/server` build (`tsc -p tsconfig.json`).
 - Prod (single-server): `npm start` serves the built client from `packages/client/dist/` and the game/ws API on :8090. No Vite needed.
 - Tests: `npm test` runs Vitest for shared + server + client. `npm run test:coverage` same. `npm run test:integration` runs `scripts/integration-round.mjs` (2-client round/economy/utility e2e) and `scripts/integration-bots.mjs` (5v5 bot-vs-bot autonomous).
-- Typecheck (client only): `npm run typecheck -w @cs2d/client`.
+- Typecheck (src + tests, all packages): `npm run typecheck`.
 
 ## Architecture details (high signal)
 - All game rules live in `shared/` (movement/collision/weapons+data/grenades/bomb/round/economy/vision/sim). Keep new rules/protocol there, not split across client/server.
@@ -22,7 +22,7 @@
 - Client prediction/interpolation in `packages/client/src/net/` (prediction.ts, interpolation.ts). Fog/vision handled on client render.
 
 ## Build, CI, deploy quirks
-- CI (`.github/workflows/test.yml`, Node 22): `npm ci --ignore-scripts` (esbuild postinstall skipped intentionally), runs `test:coverage`, client `typecheck`, `test:integration`, builds server then client. SonarCloud scan runs only if `SONAR_TOKEN` is set (PRs from forks skip).
+- CI (`.github/workflows/test.yml`, Node 22): `npm ci --ignore-scripts` (esbuild postinstall skipped intentionally), runs `test:coverage`, `typecheck` (all packages, tests included), `test:integration`, builds server then client. SonarCloud scan runs only if `SONAR_TOKEN` is set (PRs from forks skip).
 - Render (`render.yaml`, free tier): `buildCommand` is `npm ci --include=dev && npm run build` (different from CI install), `startCommand: npm start`, `healthCheckPath: /rooms`, auto-deploy on `main`. Free sleeps after 15m idle (first request after idle can be slow).
 - Single-server prod: server must be able to serve files from `packages/client/dist/` (built client). In dev, run server and Vite client separately.
 - Coverage reports consumed by Sonar: `packages/*/coverage/lcov.info`. Sonar excludes `**/test/**`, `scripts/**`, `**/vite.config.ts`, `**/vitest.config.ts`.
