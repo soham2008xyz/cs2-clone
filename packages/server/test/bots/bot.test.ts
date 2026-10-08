@@ -146,50 +146,38 @@ describe('BotController (structural smoke tests)', () => {
     expect(dist(bot.pos, dropPos)).toBeLessThan(startDist);
   });
 
-  it('post-plant, a T bot guards the planted bomb instead of its assigned site', () => {
-    const mapName = midSpawnMap();
-    const room = new Room(mapName, FAST);
-    const bot = room.addBot('T', 'normal'); // assignedSite 'A' (near T spawn) by the Math.random mock
+  /** Live midSpawnMap round with a lone T bot, then the bomb planted at `bombPos` (bot moved to `botPos` if given). */
+  function plantedRoom(bombPos: Vec2, botPos?: Vec2) {
+    const room = new Room(midSpawnMap(), FAST);
+    const bot = room.addBot('T', 'normal'); // assignedSite 'A' (behind the bot) by the Math.random mock
     room.addPlayer(null, 'Human', 'CT'); // far away: won't distract the bot
     stepUntil(room, () => room.phase === 'live');
-
-    // bomb planted away from site A, on the far side of the bot from it
-    const bombPos: Vec2 = { x: 30 * TILE_SIZE, y: 4.5 * TILE_SIZE };
+    if (botPos) bot.pos = botPos;
     bombGuts(room).bomb = { mode: 'planted', pos: bombPos, carrierId: 0, explodeTick: room.tick + 100000 };
     (room as unknown as { phase: string }).phase = 'planted';
+    return { room, bot };
+  }
+  const tileAt = (x: number, y = 4.5): Vec2 => ({ x: x * TILE_SIZE, y: y * TILE_SIZE });
 
+  it('post-plant, a T bot guards the planted bomb instead of its assigned site', () => {
+    const bombPos = tileAt(30); // far side of the bot from site A
+    const { room, bot } = plantedRoom(bombPos);
     const startDist = dist(bot.pos, bombPos);
     step(room, 90);
     expect(dist(bot.pos, bombPos)).toBeLessThan(startDist);
   });
 
   it('post-plant, a T bot holds near the bomb instead of standing on it', () => {
-    const room = new Room(midSpawnMap(), FAST);
-    const bot = room.addBot('T', 'normal');
-    room.addPlayer(null, 'Human', 'CT');
-    stepUntil(room, () => room.phase === 'live');
-
-    const bombPos: Vec2 = { x: 30 * TILE_SIZE, y: 4.5 * TILE_SIZE };
-    bot.pos = { x: bombPos.x - TILE_SIZE, y: bombPos.y };
-    bombGuts(room).bomb = { mode: 'planted', pos: bombPos, carrierId: 0, explodeTick: room.tick + 100000 };
-    (room as unknown as { phase: string }).phase = 'planted';
-
+    const bombPos = tileAt(30);
+    const { room, bot } = plantedRoom(bombPos, tileAt(29));
     const before = { ...bot.pos };
     step(room, 60);
     expect(dist(bot.pos, before)).toBeLessThan(TILE_SIZE / 2);
   });
 
   it('post-plant, a T bot walled off from the nearby bomb keeps the bomb as its goal', () => {
-    const room = new Room(midSpawnMap(), FAST);
-    const bot = room.addBot('T', 'normal');
-    room.addPlayer(null, 'Human', 'CT');
-    stepUntil(room, () => room.phase === 'live');
-
-    const bombPos: Vec2 = { x: 30.5 * TILE_SIZE, y: 4.5 * TILE_SIZE };
-    bot.pos = { x: 33.5 * TILE_SIZE, y: 4.5 * TILE_SIZE }; // ~3 tiles away (inside the hold radius), wall between
-    bombGuts(room).bomb = { mode: 'planted', pos: bombPos, carrierId: 0, explodeTick: room.tick + 100000 };
-    (room as unknown as { phase: string }).phase = 'planted';
-
+    const bombPos = tileAt(30.5);
+    const { room, bot } = plantedRoom(bombPos, tileAt(33.5)); // ~3 tiles away (inside the hold radius), wall between
     step(room, 10);
     // not holding: the bot's path goal is the bomb, not "no goal" (the detour hugs a wall
     // corner in this tiny map, so assert the goal rather than distance walked)
@@ -198,18 +186,9 @@ describe('BotController (structural smoke tests)', () => {
   });
 
   it('post-plant, a T bot holding near the bomb moves out of a fire on its tile', () => {
-    const room = new Room(midSpawnMap(), FAST);
-    const bot = room.addBot('T', 'normal');
-    room.addPlayer(null, 'Human', 'CT');
-    stepUntil(room, () => room.phase === 'live');
-
-    const bombPos: Vec2 = { x: 30 * TILE_SIZE, y: 4.5 * TILE_SIZE };
-    bot.pos = { x: bombPos.x - TILE_SIZE, y: bombPos.y };
-    bombGuts(room).bomb = { mode: 'planted', pos: bombPos, carrierId: 0, explodeTick: room.tick + 100000 };
-    (room as unknown as { phase: string }).phase = 'planted';
+    const { room, bot } = plantedRoom(tileAt(30), tileAt(29));
     const fires = (room as unknown as { fires: Map<number, unknown> }).fires;
     fires.set(301, { id: 301, kind: 'molotov', pos: { ...bot.pos }, untilTick: room.tick + 600, ownerId: 0, ownerTeam: 'CT' });
-
     const before = { ...bot.pos };
     step(room, 60);
     expect(dist(bot.pos, before)).toBeGreaterThan(TILE_SIZE / 2);
