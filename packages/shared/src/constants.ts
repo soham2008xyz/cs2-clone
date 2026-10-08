@@ -80,3 +80,6 @@ export const FRIENDLY_FIRE = false;
 export const BUYZONE_RADIUS_TILES = 7; // buy allowed within N tiles of own spawn
 export const PICKUP_RADIUS = 28;
 export const BOMB_PLANT_SITE_ONLY = true;
+
+// ── Server capacity ──────────────────────────────────────────────────────────
+export const MAX_PLAYERS_PER_ROOM = 10; // humans + bots

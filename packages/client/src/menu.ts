@@ -1,4 +1,5 @@
-import { createRoom, listRooms, type RoomListing } from './net/api.js';
+import { MAX_PLAYERS_PER_ROOM } from '@cs2d/shared';
+import { CreateRoomError, createRoom, listRooms, type RoomListing } from './net/api.js';
 import { session } from './session.js';
 
 const ROOM_LIST_REFRESH_MS = 3000;
@@ -16,6 +17,15 @@ function showError(msg: string): void {
   el('menu-error').textContent = msg;
 }
 
+/** Player-facing text for a failed create request; 429/503 come from the server's caps. */
+function createFailureMessage(err: unknown, fallback: string): string {
+  if (err instanceof CreateRoomError) {
+    if (err.status === 429) return 'creating rooms too fast — wait a moment and try again';
+    if (err.status === 503) return 'server is full — join an open room or try again later';
+  }
+  return fallback;
+}
+
 function renderRooms(rooms: RoomListing[], onJoin: (code: string, map: string) => void): void {
   const container = el('menu-rooms');
   container.replaceChildren();
@@ -30,9 +40,11 @@ function renderRooms(rooms: RoomListing[], onJoin: (code: string, map: string) =
     const row = document.createElement('div');
     row.className = 'room-row';
     const label = document.createElement('span');
-    label.textContent = `${r.code}  ·  ${r.map}  ·  ${r.players}/10  ·  ${r.phase}`;
+    label.textContent = `${r.code}  ·  ${r.map}  ·  ${r.players}/${MAX_PLAYERS_PER_ROOM}  ·  ${r.phase}`;
     const btn = document.createElement('button');
-    btn.textContent = 'Join';
+    const full = r.full ?? r.players >= MAX_PLAYERS_PER_ROOM;
+    btn.textContent = full ? 'Full' : 'Join';
+    btn.disabled = full;
     btn.onclick = () => onJoin(r.code, r.map);
     row.appendChild(label);
     row.appendChild(btn);
@@ -93,8 +105,8 @@ export function initMenu(onStart: () => void): void {
       const difficulty = selectedDifficulty();
       const { code, map } = await createRoom('dust2', true, difficulty);
       enterRoom(code, map, { perTeam: 5, difficulty });
-    } catch {
-      showError('could not create a match — is the server running?');
+    } catch (err) {
+      showError(createFailureMessage(err, 'could not create a match — is the server running?'));
     }
   };
 
@@ -105,8 +117,8 @@ export function initMenu(onStart: () => void): void {
       const backfillBots = el<HTMLInputElement>('menu-backfill').checked;
       const { code, map: confirmedMap } = await createRoom(map, backfillBots, selectedDifficulty());
       enterRoom(code, confirmedMap);
-    } catch {
-      showError('could not create a room — is the server running?');
+    } catch (err) {
+      showError(createFailureMessage(err, 'could not create a room — is the server running?'));
     }
   };
 

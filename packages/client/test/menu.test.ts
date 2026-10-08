@@ -2,7 +2,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const listRooms = vi.fn();
-vi.mock('../src/net/api.js', () => ({ listRooms: (...a: unknown[]) => listRooms(...a), createRoom: vi.fn() }));
+const createRoom = vi.fn();
+class CreateRoomError extends Error {
+  constructor(readonly status: number) {
+    super(`create room failed: ${status}`);
+  }
+}
+vi.mock('../src/net/api.js', () => ({ CreateRoomError, listRooms: (...a: unknown[]) => listRooms(...a), createRoom }));
 
 const { initMenu, resumeMenu } = await import('../src/menu.js');
 
@@ -10,6 +16,7 @@ const IDS = ['menu-name', 'menu-difficulty', 'menu-map', 'menu-backfill', 'menu-
 
 beforeEach(() => {
   vi.useFakeTimers();
+  createRoom.mockReset();
   listRooms.mockReset().mockResolvedValue({ rooms: [] });
   document.body.innerHTML =
     IDS.map((id) => `<input id="${id}" />`).join('') +
@@ -48,5 +55,44 @@ describe('menu room list refresh', () => {
     listRooms.mockClear();
     await vi.advanceTimersByTimeAsync(3000);
     expect(listRooms).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('menu capacity handling', () => {
+  const flush = () => vi.advanceTimersByTimeAsync(0);
+
+  it('shows a full room as disabled "Full"', async () => {
+    listRooms.mockResolvedValue({
+      rooms: [
+        { code: 'AAAA', map: 'dust2', players: 10, phase: 'live', full: true },
+        { code: 'BBBB', map: 'dust2', players: 3, phase: 'live', full: false },
+      ],
+    });
+    initMenu(() => {});
+    await flush();
+    const buttons = [...document.querySelectorAll<HTMLButtonElement>('#menu-rooms button')];
+    expect(buttons.map((b) => [b.textContent, b.disabled])).toEqual([
+      ['Full', true],
+      ['Join', false],
+    ]);
+    expect(document.getElementById('menu-rooms')!.textContent).toContain('10/10');
+  });
+
+  it('derives "full" from the player count when the server omits it', async () => {
+    listRooms.mockResolvedValue({ rooms: [{ code: 'AAAA', map: 'dust2', players: 10, phase: 'live' }] });
+    initMenu(() => {});
+    await flush();
+    expect(document.querySelector<HTMLButtonElement>('#menu-rooms button')!.disabled).toBe(true);
+  });
+
+  it.each([
+    [429, 'creating rooms too fast'],
+    [503, 'server is full'],
+  ])('explains a %i from room creation', async (status, text) => {
+    createRoom.mockRejectedValue(new CreateRoomError(status));
+    initMenu(() => {});
+    document.getElementById('menu-create')!.click();
+    await flush();
+    expect(document.getElementById('menu-error')!.textContent).toContain(text);
   });
 });

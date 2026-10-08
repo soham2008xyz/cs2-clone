@@ -22,6 +22,18 @@ export interface RoomListing {
   map: string;
   players: number;
   phase: string;
+  full: boolean;
+}
+
+/** Default cap on live rooms; each one runs a 60 Hz tick loop. */
+export const DEFAULT_MAX_ROOMS = 50;
+
+/** Thrown by create() when the server already hosts the maximum number of rooms. */
+export class RoomCapError extends Error {
+  constructor() {
+    super('too many rooms');
+    this.name = 'RoomCapError';
+  }
 }
 
 /** Grace period before an empty/bot-only room is reaped (covers create→join latency). */
@@ -31,7 +43,16 @@ const REAP_GRACE_MS = 60000;
 export class RoomManager {
   private readonly rooms = new Map<string, { room: Room; meta: RoomMeta; createdAt: number }>();
 
+  constructor(private readonly maxRooms = Infinity) {}
+
+  get size(): number {
+    return this.rooms.size;
+  }
+
+  /** Throws RoomCapError at the cap (after dropping any rooms that are already reapable). */
   create(map: string, backfillBots: boolean, timings: Partial<RoomTimings> = {}, botDifficulty: BotDifficulty = 'normal'): RoomMeta {
+    if (this.rooms.size >= this.maxRooms) this.reap();
+    if (this.rooms.size >= this.maxRooms) throw new RoomCapError();
     let code = genCode();
     while (this.rooms.has(code)) code = genCode();
     const room = new Room(map, timings);
@@ -48,7 +69,7 @@ export class RoomManager {
   list(): RoomListing[] {
     return [...this.rooms.values()]
       .filter(({ room }) => room.players.size > 0)
-      .map(({ room, meta }) => ({ code: meta.code, map: meta.map, players: room.players.size, phase: room.phase }));
+      .map(({ room, meta }) => ({ code: meta.code, map: meta.map, players: room.players.size, phase: room.phase, full: room.isFull }));
   }
 
   /**

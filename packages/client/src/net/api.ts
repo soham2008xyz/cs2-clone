@@ -3,6 +3,15 @@ export interface RoomListing {
   map: string;
   players: number;
   phase: string;
+  full?: boolean; // absent from older servers
+}
+
+/** createRoom failure with the HTTP status, so the menu can explain 429 (slow down) and 503 (server full). */
+export class CreateRoomError extends Error {
+  constructor(readonly status: number) {
+    super(`create room failed: ${status}`);
+    this.name = 'CreateRoomError';
+  }
 }
 
 const VITE_DEV_PORT = '5173';
@@ -29,6 +38,6 @@ export async function createRoom(
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ map, backfillBots, botDifficulty }),
   });
-  if (!res.ok) throw new Error(`create room failed: ${res.status}`);
+  if (!res.ok) throw new CreateRoomError(res.status);
   return res.json();
 }

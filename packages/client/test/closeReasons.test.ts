@@ -6,6 +6,10 @@ describe('closeMessage', () => {
     expect(closeMessage(4004, 'room not found')).toBe('room not found');
   });
 
+  it('maps 4003 to "room full"', () => {
+    expect(closeMessage(4003, 'room full')).toBe('room full');
+  });
+
   it('treats an abnormal close (1006) as a plain disconnect', () => {
     expect(closeMessage(1006, '')).toBe('disconnected from server');
   });

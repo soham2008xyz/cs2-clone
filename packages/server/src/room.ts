@@ -28,6 +28,7 @@ import {
   isSideSwap,
   matchWinner,
   MAX_HP,
+  MAX_PLAYERS_PER_ROOM,
   MOLOTOV_DPS,
   MOLOTOV_DURATION,
   MOLOTOV_RADIUS,
@@ -91,6 +92,14 @@ const BOMB_ARMOR_PEN = 0.6;
 const DEFUSE_RADIUS = 56;
 /** Sub-pixel displacement below this counts as standing still (plant/defuse). */
 const MOVE_EPSILON = 0.01;
+
+/** Thrown by addPlayer when the room already holds MAX_PLAYERS_PER_ROOM (humans + bots). */
+export class RoomFullError extends Error {
+  constructor() {
+    super('room full');
+    this.name = 'RoomFullError';
+  }
+}
 
 const sec = (s: number): number => Math.round(s * TICK_RATE);
 
@@ -297,7 +306,14 @@ export class Room {
     p.activeSlot = 2;
   }
 
+  /** True when humans + bots fill the room. */
+  get isFull(): boolean {
+    return this.players.size >= MAX_PLAYERS_PER_ROOM;
+  }
+
+  /** Throws RoomFullError at the cap; callers on the wire check `isFull` first and close with 4003. */
   addPlayer(ws: WebSocket | null, name: string, requestedTeam?: TeamId): PlayerConn {
+    if (this.isFull) throw new RoomFullError();
     const team = this.pickTeam(requestedTeam);
     const player: PlayerConn = {
       id: this.nextId++,
@@ -404,7 +420,7 @@ export class Room {
   /** Fills both teams up to `perTeam` total players (humans + bots), adding bots only. */
   fillBots(perTeam: number, difficulty: BotDifficulty = 'normal'): void {
     for (const team of ['T', 'CT'] as const) {
-      while (this.teamPlayers(team).length < perTeam) this.addBot(team, difficulty);
+      while (this.teamPlayers(team).length < perTeam && !this.isFull) this.addBot(team, difficulty);
     }
   }
 

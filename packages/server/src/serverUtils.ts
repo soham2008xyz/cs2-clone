@@ -1,3 +1,4 @@
+import type { IncomingHttpHeaders } from 'node:http';
 import { resolve, sep } from 'node:path';
 import type { RawData } from 'ws';
 import type { BotDifficulty } from './bots/bot.js';
@@ -35,4 +36,23 @@ export function rawDataToString(raw: RawData): string {
   if (Array.isArray(raw)) return Buffer.concat(raw).toString('utf8');
   if (raw instanceof ArrayBuffer) return Buffer.from(raw).toString('utf8');
   return raw.toString('utf8');
+}
+
+/**
+ * Client address for rate limiting. Behind a trusted proxy each hop appends the
+ * address it saw to x-forwarded-for, so the entry `trustedHops` from the right
+ * is the one our own proxy vouches for; anything left of it is client-supplied
+ * and forgeable. With no trusted proxy the header is ignored entirely.
+ */
+export function clientIp(req: { headers: IncomingHttpHeaders; socket: { remoteAddress?: string } }, trustedHops: number): string {
+  if (trustedHops > 0) {
+    const header = req.headers['x-forwarded-for'];
+    const parts = (Array.isArray(header) ? header.join(',') : (header ?? ''))
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const hop = parts[parts.length - trustedHops];
+    if (hop) return hop;
+  }
+  return req.socket.remoteAddress ?? 'unknown';
 }

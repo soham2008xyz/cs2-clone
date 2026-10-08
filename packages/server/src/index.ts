@@ -4,8 +4,15 @@ import { extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { listMaps, parseClientMsg, type ClientMsg } from '@cs2d/shared';
-import { RoomManager } from './roomManager.js';
-import { parseRequestUrl, rawDataToString, resolveStaticFile, validDifficulty } from './serverUtils.js';
+import { ConnectionLimiter } from './connectionLimits.js';
+import { KeyedRateLimiter } from './rateLimit.js';
+import { DEFAULT_MAX_ROOMS, RoomCapError, RoomManager } from './roomManager.js';
+import { clientIp, parseRequestUrl, rawDataToString, resolveStaticFile, validDifficulty } from './serverUtils.js';
+
+function envInt(name: string, fallback: number): number {
+  const n = Number.parseInt(process.env[name] ?? '', 10);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
 
 const PORT = Number(process.env.PORT ?? 8090);
 // CS2D_FAST=1 shrinks round timings for integration tests
@@ -14,8 +21,18 @@ const REAP_INTERVAL_MS = 30000;
 const MAX_WS_BYTES = 16 * 1024; // largest valid client message is ~1 KB of chat; ws closes the socket on anything bigger
 const MAX_BODY_BYTES = 16 * 1024; // POST /rooms bodies are tiny; reject anything larger
 
-const manager = new RoomManager();
-setInterval(() => manager.reap(), REAP_INTERVAL_MS);
+const MAX_ROOMS = envInt('CS2D_MAX_ROOMS', DEFAULT_MAX_ROOMS);
+const CREATE_BURST = envInt('CS2D_CREATE_BURST', 10); // rooms one IP can create back to back
+const CREATE_PER_MIN = envInt('CS2D_CREATE_PER_MIN', 6); // sustained rooms per minute per IP
+// Render terminates TLS at its proxy, which appends the peer address to x-forwarded-for. Elsewhere the header is forgeable, so ignore it.
+const TRUSTED_PROXY_HOPS = envInt('CS2D_TRUSTED_PROXY_HOPS', process.env.RENDER ? 1 : 0);
+
+const manager = new RoomManager(MAX_ROOMS);
+const createLimiter = new KeyedRateLimiter(CREATE_BURST, CREATE_PER_MIN / 60);
+setInterval(() => {
+  manager.reap();
+  createLimiter.prune();
+}, REAP_INTERVAL_MS);
 
 function readJsonBody(req: import('node:http').IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
@@ -96,6 +113,12 @@ const http = createServer(async (req, res) => {
   }
 
   if (url.pathname === '/rooms' && req.method === 'POST') {
+    const ip = clientIp(req, TRUSTED_PROXY_HOPS);
+    if (!createLimiter.take(ip)) {
+      res.writeHead(429, { 'content-type': 'application/json', 'retry-after': String(createLimiter.retryAfterSec(ip)), ...cors });
+      res.end(JSON.stringify({ error: 'too many requests' }));
+      return;
+    }
     try {
       const body = (await readJsonBody(req)) as { map?: string; backfillBots?: boolean; botDifficulty?: string };
       const map = listMaps().includes(body.map ?? '') ? (body.map as string) : 'dust2';
@@ -103,7 +126,12 @@ const http = createServer(async (req, res) => {
       const meta = manager.create(map, Boolean(body.backfillBots), FAST_TIMINGS, botDifficulty);
       res.writeHead(200, { 'content-type': 'application/json', ...cors });
       res.end(JSON.stringify({ code: meta.code, map: meta.map }));
-    } catch {
+    } catch (err) {
+      if (err instanceof RoomCapError) {
+        res.writeHead(503, { 'content-type': 'application/json', 'retry-after': '30', ...cors });
+        res.end(JSON.stringify({ error: 'server full' }));
+        return;
+      }
       res.writeHead(400, { 'content-type': 'application/json', ...cors });
       res.end(JSON.stringify({ error: 'bad request' }));
     }
@@ -134,6 +162,10 @@ wss.on('connection', (ws: WebSocket, req) => {
 
   const dispatch = (msg: ClientMsg): void => {
     if (msg.t === 'join' && playerId === null) {
+      if (room.isFull) {
+        ws.close(4003, 'room full');
+        return;
+      }
       const p = room.addPlayer(ws, msg.name, msg.team);
       playerId = p.id;
       playerTeam = p.team;
@@ -159,9 +191,17 @@ wss.on('connection', (ws: WebSocket, req) => {
     }
   };
 
+  const limiter = new ConnectionLimiter(Date.now());
+
   ws.on('message', (raw) => {
     const msg = parseClientMsg(rawDataToString(raw));
     if (!msg) return; // drop malformed messages
+    const verdict = limiter.check(msg, Date.now());
+    if (verdict === 'kick') {
+      ws.close(1008, 'rate limit exceeded');
+      return;
+    }
+    if (verdict === 'drop') return;
     try {
       dispatch(msg);
     } catch (err) {
@@ -174,7 +214,7 @@ wss.on('connection', (ws: WebSocket, req) => {
       const departedTeam = room.removePlayer(playerId);
       console.log(`[room ${meta.code}] #${playerId} left, ${room.players.size} online`);
       if (meta.backfillBots && departedTeam && room.phase !== 'waiting') {
-        room.addBot(departedTeam, meta.botDifficulty);
+        if (!room.isFull) room.addBot(departedTeam, meta.botDifficulty);
       }
     }
   });
