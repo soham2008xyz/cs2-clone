@@ -1,7 +1,6 @@
-import { PLAYER_RADIUS } from '../constants.js';
+import { PLAYER_RADIUS, TILE_SIZE } from '../constants.js';
 import { fromAngle, rayCircle, raycastGrid, type Vec2 } from '../math.js';
 import type { CompiledMap, TeamId } from '../map/types.js';
-import { TILE_SIZE } from '../constants.js';
 import type { WeaponDef } from './weapons.data.js';
 
 export interface CombatTarget {
@@ -15,6 +14,15 @@ export interface ShotHit {
   targetId: number;
   distance: number;
   rawDamage: number;
+}
+
+/** Who is firing what, from where, in which direction. */
+export interface ShotParams {
+  origin: Vec2;
+  aim: number;
+  spread: number;
+  weapon: WeaponDef;
+  shooterTeam: TeamId;
 }
 
 export interface ShotResult {
@@ -55,16 +63,13 @@ export function applyArmor(damage: number, armor: number, armorPen: number): { h
  * nearest enemy circle in front of the wall. Pure — the caller applies damage.
  */
 export function traceShot(
-  origin: Vec2,
-  aim: number,
-  spread: number,
-  weapon: WeaponDef,
-  shooterTeam: TeamId,
+  shot: ShotParams,
   targets: Iterable<CombatTarget>,
   map: CompiledMap,
   rng: () => number,
   friendlyFire = false,
 ): ShotResult {
+  const { origin, aim, spread, weapon, shooterTeam } = shot;
   // triangular distribution approximates gaussian spread
   const dir = aim + (rng() + rng() - 1) * spread;
   const d = fromAngle(dir);

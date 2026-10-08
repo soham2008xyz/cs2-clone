@@ -56,7 +56,7 @@ describe('traceShot', () => {
   it('hits an enemy in the open', () => {
     const shooter = at(2, 2);
     const target = { id: 9, pos: at(10, 2), team: 'CT' as const, alive: true };
-    const r = traceShot(shooter, 0, 0, ak, 'T', [target], map, mulberry32(1));
+    const r = traceShot({ origin: shooter, aim: 0, spread: 0, weapon: ak, shooterTeam: 'T' }, [target], map, mulberry32(1));
     expect(r.hit?.targetId).toBe(9);
     expect(r.hit!.rawDamage).toBeLessThanOrEqual(ak.damage);
     expect(r.hit!.rawDamage).toBeGreaterThan(ak.damage * 0.9);
@@ -65,7 +65,7 @@ describe('traceShot', () => {
   it('wall blocks the shot', () => {
     const shooter = at(2, 6);
     const target = { id: 9, pos: at(27, 6), team: 'CT' as const, alive: true };
-    const r = traceShot(shooter, 0, 0, ak, 'T', [target], map, mulberry32(1));
+    const r = traceShot({ origin: shooter, aim: 0, spread: 0, weapon: ak, shooterTeam: 'T' }, [target], map, mulberry32(1));
     expect(r.hit).toBeNull();
     // tracer stops at the wall (x=15*32=480)
     expect(r.end.x).toBeLessThanOrEqual(15 * TILE_SIZE + 1);
@@ -75,35 +75,35 @@ describe('traceShot', () => {
     const shooter = at(2, 2);
     const near = { id: 1, pos: at(8, 2), team: 'CT' as const, alive: true };
     const far = { id: 2, pos: at(12, 2), team: 'CT' as const, alive: true };
-    const r = traceShot(shooter, 0, 0, ak, 'T', [far, near], map, mulberry32(1));
+    const r = traceShot({ origin: shooter, aim: 0, spread: 0, weapon: ak, shooterTeam: 'T' }, [far, near], map, mulberry32(1));
     expect(r.hit?.targetId).toBe(1);
   });
 
   it('ignores teammates without friendly fire', () => {
     const shooter = at(2, 2);
     const mate = { id: 1, pos: at(8, 2), team: 'T' as const, alive: true };
-    const r = traceShot(shooter, 0, 0, ak, 'T', [mate], map, mulberry32(1));
+    const r = traceShot({ origin: shooter, aim: 0, spread: 0, weapon: ak, shooterTeam: 'T' }, [mate], map, mulberry32(1));
     expect(r.hit).toBeNull();
   });
 
   it('hits teammates when friendly fire is enabled', () => {
     const shooter = at(2, 2);
     const mate = { id: 1, pos: at(8, 2), team: 'T' as const, alive: true };
-    const r = traceShot(shooter, 0, 0, ak, 'T', [mate], map, mulberry32(1), true);
+    const r = traceShot({ origin: shooter, aim: 0, spread: 0, weapon: ak, shooterTeam: 'T' }, [mate], map, mulberry32(1), true);
     expect(r.hit?.targetId).toBe(1);
   });
 
   it('a target overlapping the shooter is not hit (dist<=0 guard)', () => {
     const shooter = at(2, 2);
     const onTopOfShooter = { id: 1, pos: { ...shooter }, team: 'CT' as const, alive: true };
-    const r = traceShot(shooter, 0, 0, ak, 'T', [onTopOfShooter], map, mulberry32(1));
+    const r = traceShot({ origin: shooter, aim: 0, spread: 0, weapon: ak, shooterTeam: 'T' }, [onTopOfShooter], map, mulberry32(1));
     expect(r.hit).toBeNull();
   });
 
   it('a target directly behind the shooter is not hit', () => {
     const shooter = at(10, 2);
     const behind = { id: 1, pos: at(2, 2), team: 'CT' as const, alive: true }; // aim faces +x, target is to the west
-    const r = traceShot(shooter, 0, 0, ak, 'T', [behind], map, mulberry32(1));
+    const r = traceShot({ origin: shooter, aim: 0, spread: 0, weapon: ak, shooterTeam: 'T' }, [behind], map, mulberry32(1));
     expect(r.hit).toBeNull();
   });
 
@@ -111,7 +111,7 @@ describe('traceShot', () => {
     const knife = getWeapon('knife');
     const shooter = at(2, 2);
     const target = { id: 9, pos: at(10, 2), team: 'CT' as const, alive: true };
-    const r = traceShot(shooter, 0, 0, knife, 'T', [target], map, mulberry32(1));
+    const r = traceShot({ origin: shooter, aim: 0, spread: 0, weapon: knife, shooterTeam: 'T' }, [target], map, mulberry32(1));
     expect(r.hit).toBeNull();
   });
 });

@@ -1,3 +1,4 @@
+import { randomInt } from 'node:crypto';
 import type { BotDifficulty } from './bots/bot.js';
 import { Room, type RoomTimings } from './room.js';
 
@@ -12,7 +13,7 @@ const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // excludes ambiguous cha
 
 function genCode(len = 4): string {
   let s = '';
-  for (let i = 0; i < len; i++) s += CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)];
+  for (let i = 0; i < len; i++) s += CODE_CHARS[randomInt(CODE_CHARS.length)];
   return s;
 }
 
@@ -28,7 +29,7 @@ const REAP_GRACE_MS = 60000;
 
 /** Owns every live Room instance, keyed by a short join code. */
 export class RoomManager {
-  private rooms = new Map<string, { room: Room; meta: RoomMeta; createdAt: number }>();
+  private readonly rooms = new Map<string, { room: Room; meta: RoomMeta; createdAt: number }>();
 
   create(map: string, backfillBots: boolean, timings: Partial<RoomTimings> = {}, botDifficulty: BotDifficulty = 'normal'): RoomMeta {
     let code = genCode();

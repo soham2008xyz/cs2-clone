@@ -19,7 +19,7 @@ interface Frame {
  * needing clock sync with the server.
  */
 export class SnapshotBuffer {
-  private frames: Frame[] = [];
+  private readonly frames: Frame[] = [];
 
   push(snap: SnapshotMsg): void {
     const players = new Map<number, RemoteState>();
@@ -37,7 +37,7 @@ export class SnapshotBuffer {
 
     const renderTime = performance.now() - INTERP_DELAY_MS;
     let older = this.frames[0];
-    let newer = this.frames[this.frames.length - 1];
+    let newer = this.frames.at(-1)!;
     for (let i = this.frames.length - 1; i >= 0; i--) {
       if (this.frames[i].time <= renderTime) {
         older = this.frames[i];

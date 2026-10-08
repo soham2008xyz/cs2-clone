@@ -46,7 +46,8 @@
         margin: 0 0 16px;
         text-align: center;
       }
-      #menu label {
+      #menu label,
+      #menu .field-label {
         display: block;
         font-size: 11px;
         color: #999;
@@ -173,7 +174,18 @@
         text-shadow: 1px 1px 1px #000;
         width: fit-content;
         max-width: 100%;
-        word-break: break-word;
+        overflow-wrap: anywhere;
+      }
+      .visually-hidden {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        margin: -1px;
+        padding: 0;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
+        border: 0;
       }
       #chat-input {
         position: fixed;
@@ -225,8 +237,8 @@
           <button id="menu-join" class="secondary">Join</button>
         </div>
 
-        <label>Open rooms</label>
-        <div id="menu-rooms"><div id="menu-rooms-empty">No open rooms — create one!</div></div>
+        <div id="menu-rooms-label" class="field-label">Open rooms</div>
+        <section id="menu-rooms" aria-labelledby="menu-rooms-label"><div id="menu-rooms-empty">No open rooms — create one!</div></section>
 
         <div id="menu-error"></div>
       </div>
@@ -234,6 +246,7 @@
 
     <div id="game"></div>
     <div id="chat-log"></div>
+    <label for="chat-input" class="visually-hidden">Chat message</label>
     <input type="text" id="chat-input" maxlength="240" placeholder="Press Enter to chat, Esc to cancel" />
 
     <script type="module" src="/src/main.ts"></script>

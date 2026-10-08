@@ -2,17 +2,23 @@
 // fast timings. Plays three rounds: elimination win, plant→defuse, plant→boom.
 //   node scripts/integration-round.mjs
 import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
 
 const PORT = 8091;
+const TSX_CLI = fileURLToPath(new URL('../node_modules/tsx/dist/cli.mjs', import.meta.url));
 const BTN = { UP: 1, DOWN: 2, LEFT: 4, RIGHT: 8, ATTACK: 32, USE: 128 };
 
+/** Collapse CR/LF so values from the server can't forge extra log lines. */
+const oneLine = (v) => String(v).replaceAll(/[\r\n]+/g, ' ');
+/** ws delivers Buffer, ArrayBuffer or (fragmented) Buffer[]; decode any of them as UTF-8. */
+const wsText = (raw) => (Array.isArray(raw) ? Buffer.concat(raw) : Buffer.from(raw)).toString('utf8');
 const fail = (msg) => {
   console.error(`✗ FAIL: ${msg}`);
   process.exitCode = 1;
   cleanup();
 };
-const ok = (msg) => console.log(`✓ ${msg}`);
+const ok = (msg) => console.log(`✓ ${oneLine(msg)}`);
 
 let server;
 const clients = [];
@@ -56,7 +62,7 @@ class TestClient {
       });
       this.ws.on('error', reject);
       this.ws.on('message', (raw) => {
-        const msg = JSON.parse(raw.toString());
+        const msg = JSON.parse(wsText(raw));
         if (msg.t === 'welcome') this.id = msg.id;
         if (msg.t === 's') {
           this.lastTick = msg.k;
@@ -122,7 +128,7 @@ async function waitFor(desc, cond, timeoutMs = 20000) {
   while (Date.now() - t0 < timeoutMs) {
     const v = await cond();
     if (v) return v;
-    await sleep(30);
+    await sleep(30); // NOSONAR - polling: each check must follow the previous one
   }
   throw new Error(`timeout waiting for: ${desc}`);
 }
@@ -148,9 +154,9 @@ const syncRoundEnd = (c, timeoutMs = 20000) =>
   }, timeoutMs);
 
 async function main() {
-  // spawn tsx directly (not via npx): no wrapper cold-start, and kill()
-  // reaches the node process that actually holds the port
-  server = spawn('node_modules/.bin/tsx', ['packages/server/src/index.ts'], {
+  // run tsx's CLI with this same node binary (not via npx or PATH): no wrapper
+  // cold-start, and kill() reaches the node process that actually holds the port
+  server = spawn(process.execPath, [TSX_CLI, 'packages/server/src/index.ts'], {
     env: { ...process.env, PORT: String(PORT), CS2D_FAST: '1' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -332,4 +338,8 @@ async function main() {
   cleanup();
 }
 
-main().catch((e) => fail(e?.stack ?? e?.message ?? String(e)));
+try {
+  await main();
+} catch (e) {
+  fail(e?.stack ?? e?.message ?? String(e));
+}

@@ -3,15 +3,21 @@
 // without the server crashing or the match stalling.
 //   node scripts/integration-bots.mjs
 import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
 
 const PORT = 8092;
+const TSX_CLI = fileURLToPath(new URL('../node_modules/tsx/dist/cli.mjs', import.meta.url));
+/** Collapse CR/LF so values from the server can't forge extra log lines. */
+const oneLine = (v) => String(v).replaceAll(/[\r\n]+/g, ' ');
+/** ws delivers Buffer, ArrayBuffer or (fragmented) Buffer[]; decode any of them as UTF-8. */
+const wsText = (raw) => (Array.isArray(raw) ? Buffer.concat(raw) : Buffer.from(raw)).toString('utf8');
 const fail = (msg) => {
   console.error(`✗ FAIL: ${msg}`);
   process.exitCode = 1;
   cleanup();
 };
-const ok = (msg) => console.log(`✓ ${msg}`);
+const ok = (msg) => console.log(`✓ ${oneLine(msg)}`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let server;
@@ -30,15 +36,15 @@ async function waitFor(desc, cond, timeoutMs = 20000) {
   while (Date.now() - t0 < timeoutMs) {
     const v = await cond();
     if (v) return v;
-    await sleep(50);
+    await sleep(50); // NOSONAR - polling: each check must follow the previous one
   }
   throw new Error(`timeout waiting for: ${desc}`);
 }
 
 async function main() {
-  // spawn tsx directly (not via npx): no wrapper cold-start, and kill()
-  // reaches the node process that actually holds the port
-  server = spawn('node_modules/.bin/tsx', ['packages/server/src/index.ts'], {
+  // run tsx's CLI with this same node binary (not via npx or PATH): no wrapper
+  // cold-start, and kill() reaches the node process that actually holds the port
+  server = spawn(process.execPath, [TSX_CLI, 'packages/server/src/index.ts'], {
     env: { ...process.env, PORT: String(PORT), CS2D_FAST: '1' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -81,7 +87,7 @@ async function main() {
     ws.on('error', reject);
   });
   ws.on('message', (raw) => {
-    const msg = JSON.parse(raw.toString());
+    const msg = JSON.parse(wsText(raw));
     if (msg.t === 'roster') state.roster = msg.players;
     if (msg.t === 's') {
       state.match = msg.m;
@@ -109,7 +115,11 @@ async function main() {
     () => state.rounds.length >= TARGET_ROUNDS,
     120000,
   );
-  ok(`${state.rounds.length} rounds completed autonomously: ${state.rounds.slice(0, TARGET_ROUNDS).map((r) => `${r.winner}/${r.reason}`).join(', ')}`);
+  const outcomes = state.rounds
+    .slice(0, TARGET_ROUNDS)
+    .map((r) => [r.winner, r.reason].join('/'))
+    .join(', ');
+  ok(`${state.rounds.length} rounds completed autonomously: ${outcomes}`);
 
   const reasons = new Set(state.rounds.map((r) => r.reason));
   ok(`round end reasons observed: ${[...reasons].join(', ')}`);
@@ -128,4 +138,8 @@ async function main() {
   cleanup();
 }
 
-main().catch((e) => fail(e?.stack ?? e?.message ?? String(e)));
+try {
+  await main();
+} catch (e) {
+  fail(e?.stack ?? e?.message ?? String(e));
+}

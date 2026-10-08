@@ -9,7 +9,7 @@ function el<T extends HTMLElement>(id: string): T {
 
 function playerName(): string {
   const raw = el<HTMLInputElement>('menu-name').value.trim();
-  return raw || `Player${Math.floor(Math.random() * 1000)}`;
+  return raw || `Player${Math.floor(Math.random() * 1000)}`; // NOSONAR - non-cryptographic: cosmetic default guest name
 }
 
 function showError(msg: string): void {

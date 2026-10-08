@@ -13,6 +13,7 @@ import {
   type SelfState,
   type TeamId,
 } from '@cs2d/shared';
+import { hpLabel, killfeedColor, weaponLines } from './presentation.js';
 
 interface KillEntry {
   text: Phaser.GameObjects.Text;
@@ -162,8 +163,7 @@ export class HudScene extends Phaser.Scene {
       if (w.team && w.team !== team) continue;
       items.push({ id: w.id, label: w.name, price: w.price });
     }
-    items.push({ id: 'kevlar', label: 'Kevlar', price: PRICE_KEVLAR });
-    items.push({ id: 'helmet', label: 'Helmet', price: PRICE_HELMET });
+    items.push({ id: 'kevlar', label: 'Kevlar', price: PRICE_KEVLAR }, { id: 'helmet', label: 'Helmet', price: PRICE_HELMET });
     if (team === 'CT') items.push({ id: 'kit', label: 'Defuse Kit', price: PRICE_DEFUSE_KIT });
     for (const g of Object.values(GRENADES)) {
       if (g.team && g.team !== team) continue;
@@ -284,77 +284,74 @@ export class HudScene extends Phaser.Scene {
     if (teamChanged) this.buildBuyPanel(payload.team);
     const { hp, alive, me, match } = payload;
 
-    this.hpText.setText(alive ? `♥ ${Math.max(0, hp)}${me && me.armor > 0 ? `  ⛨ ${me.armor}${me.helm ? '+' : ''}` : ''}` : '');
-    if (me) {
-      this.moneyText.setText(`$ ${me.money}${me.buy ? '  [B] BUY' : ''}`);
-      if (me.slot === 4 && me.nades?.length) {
-        this.ammoText.setText('THROW');
-        this.weaponText.setText(getGrenade(me.nades[0]).name.toUpperCase());
-      } else if (me.weapon === 'knife') {
-        this.ammoText.setText('—');
-        this.weaponText.setText(me.weapon.toUpperCase());
-      } else if (me.reload > 0) {
-        this.ammoText.setText('RELOADING');
-        this.weaponText.setText(me.weapon.toUpperCase() + (me.kit ? '  +KIT' : ''));
-      } else {
-        this.ammoText.setText(`${me.ammo} / ${me.reserve}`);
-        this.weaponText.setText(me.weapon.toUpperCase() + (me.kit ? '  +KIT' : ''));
-      }
-      this.nadeText.setText(me.nades?.length ? `[4] ${me.nades.map((n) => getGrenade(n).name).join(', ')}` : '');
-      this.bombHint.setText(me.bomb ? 'YOU HAVE THE C4 — hold E on a bomb site to plant' : '');
+    this.hpText.setText(hpLabel(hp, alive, me));
+    if (me) this.updateSelfState(me);
+    if (match) this.updateMatchState(match, me, alive);
+  }
 
-      // flash blindness: full white fading proportional to remaining duration
-      const blindFrac = Math.min(1, (me.blind ?? 0) / (FLASH_MAX_BLIND * TICK_RATE));
-      this.blindOverlay.setFillStyle(0xffffff, blindFrac);
+  private updateSelfState(me: SelfState): void {
+    this.moneyText.setText(`$ ${me.money}${me.buy ? '  [B] BUY' : ''}`);
+    const { ammo, weapon } = weaponLines(me);
+    this.ammoText.setText(ammo);
+    this.weaponText.setText(weapon);
+    this.nadeText.setText(me.nades?.length ? `[4] ${me.nades.map((n) => getGrenade(n).name).join(', ')}` : '');
+    this.bombHint.setText(me.bomb ? 'YOU HAVE THE C4 — hold E on a bomb site to plant' : '');
+
+    // flash blindness: full white fading proportional to remaining duration
+    const blindFrac = Math.min(1, (me.blind ?? 0) / (FLASH_MAX_BLIND * TICK_RATE));
+    this.blindOverlay.setFillStyle(0xffffff, blindFrac);
+  }
+
+  /** Timer, scores, buy-menu auto-close, and plant/defuse progress. */
+  private updateMatchState(match: MatchSnap, me: SelfState | null, alive: boolean): void {
+    this.teamHintText.setVisible(match.ph === 'waiting');
+    this.updateTimer(match);
+    this.scoreText.setText(
+      match.ph === 'waiting' ? 'waiting for both teams…' : `T ${match.st}  —  ${match.sct} CT    round ${match.rn}`,
+    );
+
+    // close the buy menu when buying is over
+    if (this.buyOpen && me && !me.buy) this.toggleBuy();
+
+    // plant/defuse progress
+    this.progressBar.clear();
+    if (match.prog !== undefined && alive) {
+      const w = 220;
+      const x = this.scale.width / 2 - w / 2;
+      const y = this.scale.height * 0.62;
+      this.progressBar.fillStyle(0x000000, 0.6).fillRect(x, y, w, 14);
+      this.progressBar.fillStyle(0xffd280, 0.95).fillRect(x + 2, y + 2, (w - 4) * match.prog, 10);
     }
+  }
 
-    // timer + scores
-    if (match) {
-      const secs = Math.ceil(match.end / 60);
-      const mm = Math.floor(secs / 60);
-      const ss = (secs % 60).toString().padStart(2, '0');
-      this.teamHintText.setVisible(match.ph === 'waiting');
-      switch (match.ph) {
-        case 'waiting':
-          this.timerText.setText('WARMUP').setColor('#aaaaaa');
-          break;
-        case 'freeze':
-          this.timerText.setText(`BUY  ${mm}:${ss}`).setColor('#8fd18f');
-          break;
-        case 'live':
-          this.timerText.setText(`${mm}:${ss}`).setColor('#ffffff');
-          break;
-        case 'planted': {
-          const blink = Math.floor(this.time.now / 400) % 2 === 0;
-          this.timerText.setText(`⏱ ${secs}`).setColor(blink ? '#ff5544' : '#ffaa88');
-          break;
-        }
-        case 'round_end':
-        case 'match_end':
-          this.timerText.setText('');
-          break;
+  private updateTimer(match: MatchSnap): void {
+    const secs = Math.ceil(match.end / 60);
+    const mm = Math.floor(secs / 60);
+    const ss = (secs % 60).toString().padStart(2, '0');
+    switch (match.ph) {
+      case 'waiting':
+        this.timerText.setText('WARMUP').setColor('#aaaaaa');
+        break;
+      case 'freeze':
+        this.timerText.setText(`BUY  ${mm}:${ss}`).setColor('#8fd18f');
+        break;
+      case 'live':
+        this.timerText.setText(`${mm}:${ss}`).setColor('#ffffff');
+        break;
+      case 'planted': {
+        const blink = Math.floor(this.time.now / 400) % 2 === 0;
+        this.timerText.setText(`⏱ ${secs}`).setColor(blink ? '#ff5544' : '#ffaa88');
+        break;
       }
-      this.scoreText.setText(
-        match.ph === 'waiting' ? 'waiting for both teams…' : `T ${match.st}  —  ${match.sct} CT    round ${match.rn}`,
-      );
-
-      // close the buy menu when buying is over
-      if (this.buyOpen && me && !me.buy) this.toggleBuy();
-
-      // plant/defuse progress
-      this.progressBar.clear();
-      if (match.prog !== undefined && alive) {
-        const w = 220;
-        const x = this.scale.width / 2 - w / 2;
-        const y = this.scale.height * 0.62;
-        this.progressBar.fillStyle(0x000000, 0.6).fillRect(x, y, w, 14);
-        this.progressBar.fillStyle(0xffd280, 0.95).fillRect(x + 2, y + 2, (w - 4) * match.prog, 10);
-      }
+      case 'round_end':
+      case 'match_end':
+        this.timerText.setText('');
+        break;
     }
   }
 
   private onKill(k: { killer: string; victim: string; weapon: string; meKiller: boolean; meVictim: boolean }): void {
-    const color = k.meKiller ? '#ffd76b' : k.meVictim ? '#ff6b6b' : '#dddddd';
+    const color = killfeedColor(k);
     const line = k.killer ? `${k.killer}  [${k.weapon}]  ${k.victim}` : `☠  [${k.weapon}]  ${k.victim}`;
     const t = this.add
       .text(this.scale.width - 16, 16, line, { fontFamily: MONO, fontSize: '13px', color })

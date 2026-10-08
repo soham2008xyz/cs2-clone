@@ -70,7 +70,7 @@ describe('smoothPath', () => {
     const raw = findPath(map, at(2, 2), at(15, 15));
     const smoothed = smoothPath(map, at(2, 2), raw);
     expect(smoothed.length).toBeLessThanOrEqual(raw.length);
-    expect(smoothed.length).toBe(1); // fully open room -> straight line
+    expect(smoothed).toHaveLength(1); // fully open room -> straight line
   });
 
   it('keeps enough waypoints to navigate around a wall', () => {

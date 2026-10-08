@@ -22,7 +22,7 @@ export class Predictor {
   seq = 0;
   private pending: PendingInput[] = [];
 
-  constructor(private map: CompiledMap) {}
+  constructor(private readonly map: CompiledMap) {}
 
   buildInput(buttons: number, aim: number, lastServerTick: number, switchSlot?: number): InputMsg {
     const msg: InputMsg = { t: 'i', s: ++this.seq, b: buttons, a: aim, k: lastServerTick };

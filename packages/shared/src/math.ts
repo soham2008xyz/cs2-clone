@@ -41,6 +41,15 @@ export function angleDiff(a: number, b: number): number {
  * DDA raycast over a tile grid. Returns the distance to the first solid tile
  * boundary, or maxDist if nothing was hit.
  */
+/** Per-axis DDA setup: step direction, distance between boundaries, distance to the first boundary. */
+function ddaAxis(origin: number, dir: number, cell: number, tileSize: number) {
+  const step = dir > 0 ? 1 : -1;
+  const tDelta = dir !== 0 ? Math.abs(tileSize / dir) : Infinity;
+  const nextBoundary = (cell + (step > 0 ? 1 : 0)) * tileSize;
+  const tMax = dir !== 0 ? (nextBoundary - origin) / dir : Infinity;
+  return { step, tDelta, tMax };
+}
+
 export function raycastGrid(
   origin: Vec2,
   dir: Vec2, // must be normalized
@@ -52,26 +61,21 @@ export function raycastGrid(
   let ty = Math.floor(origin.y / tileSize);
   if (isSolid(tx, ty)) return 0;
 
-  const stepX = dir.x > 0 ? 1 : -1;
-  const stepY = dir.y > 0 ? 1 : -1;
-  const tDeltaX = dir.x !== 0 ? Math.abs(tileSize / dir.x) : Infinity;
-  const tDeltaY = dir.y !== 0 ? Math.abs(tileSize / dir.y) : Infinity;
-
-  const nextBoundaryX = (tx + (stepX > 0 ? 1 : 0)) * tileSize;
-  const nextBoundaryY = (ty + (stepY > 0 ? 1 : 0)) * tileSize;
-  let tMaxX = dir.x !== 0 ? (nextBoundaryX - origin.x) / dir.x : Infinity;
-  let tMaxY = dir.y !== 0 ? (nextBoundaryY - origin.y) / dir.y : Infinity;
+  const ax = ddaAxis(origin.x, dir.x, tx, tileSize);
+  const ay = ddaAxis(origin.y, dir.y, ty, tileSize);
+  let tMaxX = ax.tMax;
+  let tMaxY = ay.tMax;
 
   let t = 0;
   while (t <= maxDist) {
     if (tMaxX < tMaxY) {
       t = tMaxX;
-      tMaxX += tDeltaX;
-      tx += stepX;
+      tMaxX += ax.tDelta;
+      tx += ax.step;
     } else {
       t = tMaxY;
-      tMaxY += tDeltaY;
-      ty += stepY;
+      tMaxY += ay.tDelta;
+      ty += ay.step;
     }
     if (t > maxDist) break;
     if (isSolid(tx, ty)) return t;
@@ -87,15 +91,17 @@ export function rayCircle(origin: Vec2, dir: Vec2, center: Vec2, radius: number)
   const disc = b * b - c;
   if (disc < 0) return null;
   const t = -b - Math.sqrt(disc);
-  return t >= 0 ? t : c <= 0 ? 0 : null; // inside the circle counts as 0
+  if (t >= 0) return t;
+  return c <= 0 ? 0 : null; // inside the circle counts as 0
 }
 
 /** Deterministic-enough PRNG (mulberry32) for spread patterns etc. */
 export function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
   return () => {
-    a |= 0;
-    a = (a + 0x6d2b79f5) | 0;
+    // >>> 0 keeps `a` as uint32; every later use is a bitwise op, so the
+    // sequence is identical to the canonical int32 (`| 0`) formulation.
+    a = (a + 0x6d2b79f5) >>> 0;
     let t = Math.imul(a ^ (a >>> 15), 1 | a);
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;

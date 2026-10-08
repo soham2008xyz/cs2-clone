@@ -19,8 +19,6 @@ export function decideBotBuys(money: number, team: TeamId, hasKit: boolean): str
 
   wishlist.push('kevlar', 'helmet'); // helmet requires armor, so it must follow kevlar
   if (team === 'CT' && !hasKit) wishlist.push('kit');
-  wishlist.push('smoke', 'flash');
-  wishlist.push(team === 'T' ? 'molotov' : 'incendiary');
-  wishlist.push('he');
+  wishlist.push('smoke', 'flash', team === 'T' ? 'molotov' : 'incendiary', 'he');
   return wishlist;
 }

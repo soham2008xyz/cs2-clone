@@ -54,5 +54,5 @@ export function appendChatLine(from: string, text: string, color: string): void 
   line.style.color = color;
   line.textContent = `${from}: ${text}`;
   logEl.appendChild(line);
-  while (logEl.children.length > 8) logEl.removeChild(logEl.firstChild!);
+  while (logEl.children.length > 8) logEl.firstElementChild?.remove();
 }

@@ -5,16 +5,16 @@ import { CH, type BuyZone, type Callout, type MapDef, type TeamId, type UtilityS
  * decorate. Produces a plain grid-of-chars MapDef, so maps stay data.
  */
 export class MapBuilder {
-  private cells: string[][];
-  private callouts: Callout[] = [];
-  private buyzones: BuyZone[] = [];
-  private utilitySpots: UtilitySpot[] = [];
+  private readonly cells: string[][];
+  private readonly callouts: Callout[] = [];
+  private readonly buyzones: BuyZone[] = [];
+  private readonly utilitySpots: UtilitySpot[] = [];
 
   constructor(
     public readonly width: number,
     public readonly height: number,
   ) {
-    this.cells = Array.from({ length: height }, () => Array(width).fill(CH.WALL));
+    this.cells = Array.from({ length: height }, () => new Array(width).fill(CH.WALL));
   }
 
   private set(x: number, y: number, ch: string): void {

@@ -15,18 +15,21 @@ import {
   type GroundItem,
   type MatchSnap,
   type NadeSnap,
+  type Occluder,
   type RosterEntry,
   type SelfState,
   type TeamId,
+  type Vec2,
   type ZoneSnap,
 } from '@cs2d/shared';
 import { playerTexture } from './BootScene.js';
+import { nadeColor, teamChatColor } from './presentation.js';
 import { sfx } from '../audio/sfx.js';
 import { toggleMute, unlockAudio } from '../audio/synth.js';
 import { appendChatLine, initChat } from '../chat.js';
 import { Connection, serverUrl } from '../net/connection.js';
 import { Predictor } from '../net/prediction.js';
-import { SnapshotBuffer } from '../net/interpolation.js';
+import { SnapshotBuffer, type RemoteState } from '../net/interpolation.js';
 import { renderMap } from '../render/mapRender.js';
 import { session } from '../session.js';
 
@@ -35,6 +38,8 @@ interface Entity {
   label: Phaser.GameObjects.Text;
   team: TeamId;
 }
+
+type SampledStates = Map<number, RemoteState>;
 
 interface Tracer {
   x: number;
@@ -52,9 +57,9 @@ function weaponDisplayName(id: string): string {
 
 export class GameScene extends Phaser.Scene {
   map!: CompiledMap;
-  private conn = new Connection();
+  private readonly conn = new Connection();
   private predictor!: Predictor;
-  private buffer = new SnapshotBuffer();
+  private readonly buffer = new SnapshotBuffer();
   myId = -1;
   myTeam: TeamId = 'T';
   private myHp = 100;
@@ -77,14 +82,14 @@ export class GameScene extends Phaser.Scene {
   private statusText!: Phaser.GameObjects.Text;
   private match: MatchSnap | null = null;
   private bombSprite!: Phaser.GameObjects.Sprite;
-  private itemSprites = new Map<number, Phaser.GameObjects.Sprite>();
+  private readonly itemSprites = new Map<number, Phaser.GameObjects.Sprite>();
   private groundItems: GroundItem[] = [];
-  private nadeSprites = new Map<number, Phaser.GameObjects.Arc>();
+  private readonly nadeSprites = new Map<number, Phaser.GameObjects.Arc>();
   private nades: NadeSnap[] = [];
   private zones: ZoneSnap[] = [];
   private zoneGfx!: Phaser.GameObjects.Graphics;
-  private smokeClouds = new Map<number, Phaser.GameObjects.Image[]>();
-  private fireFx = new Map<number, { emitter: Phaser.GameObjects.Particles.ParticleEmitter; glow: Phaser.GameObjects.Image }>();
+  private readonly smokeClouds = new Map<number, Phaser.GameObjects.Image[]>();
+  private readonly fireFx = new Map<number, { emitter: Phaser.GameObjects.Particles.ParticleEmitter; glow: Phaser.GameObjects.Image }>();
   private spectateIndex = 0;
   private spectateTarget = -1;
   private chatOpen = false;
@@ -227,8 +232,7 @@ export class GameScene extends Phaser.Scene {
       this.statusText.setText('disconnected from server').setVisible(true);
     };
     this.conn.onChat = (msg) => {
-      const color = msg.team === 'T' ? '#ffd280' : msg.team === 'CT' ? '#9cc4ff' : '#aaaaaa';
-      appendChatLine(msg.from, msg.text, color);
+      appendChatLine(msg.from, msg.text, teamChatColor(msg.team));
     };
     this.conn.onPong = (msg) => {
       this.game.events.emit('hud:ping', Math.round(performance.now() - msg.t0));
@@ -264,33 +268,11 @@ export class GameScene extends Phaser.Scene {
 
   private handleEvent(ev: GameEvent): void {
     switch (ev.e) {
-      case 'shot': {
-        this.tracers.push({ x: ev.x, y: ev.y, tx: ev.tx, ty: ev.ty, until: this.time.now + 70 });
-        const cls = getWeapon(ev.w).cls;
-        sfx(`shot_${cls}`, { x: ev.x, y: ev.y }, this.listener);
-        if (cls !== 'knife' && this.textures.exists('muzzle')) {
-          const ang = Math.atan2(ev.ty - ev.y, ev.tx - ev.x);
-          const m = this.add
-            .image(ev.x + Math.cos(ang) * 20, ev.y + Math.sin(ang) * 20, 'muzzle')
-            .setDepth(16)
-            .setRotation(ang)
-            .setDisplaySize(30, 30)
-            .setBlendMode(Phaser.BlendModes.ADD)
-            .setAlpha(0.9)
-            .setMask(this.shotFxMask);
-          this.tweens.add({ targets: m, alpha: 0, duration: 60, onComplete: () => m.destroy() });
-        }
+      case 'shot':
+        this.onShot(ev);
         break;
-      }
       case 'kill':
-        if (ev.k === this.myId) sfx('kill');
-        this.game.events.emit('hud:kill', {
-          killer: ev.k === 0 ? '' : this.nameOf(ev.k), // 0 = world (C4, unowned fire)
-          victim: this.nameOf(ev.v),
-          weapon: weaponDisplayName(ev.w),
-          meKiller: ev.k !== 0 && ev.k === this.myId,
-          meVictim: ev.v === this.myId,
-        });
+        this.onKillEvent(ev);
         break;
       case 'hit':
         this.game.events.emit('hud:hitmarker');
@@ -343,14 +325,9 @@ export class GameScene extends Phaser.Scene {
         });
         break;
       }
-      case 'he_pop': {
-        const boom = this.add.circle(ev.x, ev.y, 20, 0xffcc66, 0.85).setDepth(30);
-        this.tweens.add({ targets: boom, radius: 130, alpha: 0, duration: 350, onComplete: () => boom.destroy() });
-        if (Math.hypot(ev.x - this.predictor.pos.x, ev.y - this.predictor.pos.y) < 250) this.cameras.main.shake(180, 0.006);
-        this.explosionGlow(ev.x, ev.y, 260);
-        sfx('he_boom', { x: ev.x, y: ev.y }, this.listener);
+      case 'he_pop':
+        this.onHePop(ev.x, ev.y);
         break;
-      }
       case 'flash_pop': {
         const pop = this.add.circle(ev.x, ev.y, 10, 0xffffff, 0.95).setDepth(30);
         this.tweens.add({ targets: pop, radius: 40, alpha: 0, duration: 250, onComplete: () => pop.destroy() });
@@ -364,6 +341,42 @@ export class GameScene extends Phaser.Scene {
         sfx('molly_ignite', { x: ev.x, y: ev.y }, this.listener);
         break; // fire renders from the zone snapshot
     }
+  }
+
+  private onShot(ev: Extract<GameEvent, { e: 'shot' }>): void {
+    this.tracers.push({ x: ev.x, y: ev.y, tx: ev.tx, ty: ev.ty, until: this.time.now + 70 });
+    const cls = getWeapon(ev.w).cls;
+    sfx(`shot_${cls}`, { x: ev.x, y: ev.y }, this.listener);
+    if (cls === 'knife' || !this.textures.exists('muzzle')) return;
+    const ang = Math.atan2(ev.ty - ev.y, ev.tx - ev.x);
+    const m = this.add
+      .image(ev.x + Math.cos(ang) * 20, ev.y + Math.sin(ang) * 20, 'muzzle')
+      .setDepth(16)
+      .setRotation(ang)
+      .setDisplaySize(30, 30)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setAlpha(0.9)
+      .setMask(this.shotFxMask);
+    this.tweens.add({ targets: m, alpha: 0, duration: 60, onComplete: () => m.destroy() });
+  }
+
+  private onKillEvent(ev: Extract<GameEvent, { e: 'kill' }>): void {
+    if (ev.k === this.myId) sfx('kill');
+    this.game.events.emit('hud:kill', {
+      killer: ev.k === 0 ? '' : this.nameOf(ev.k), // 0 = world (C4, unowned fire)
+      victim: this.nameOf(ev.v),
+      weapon: weaponDisplayName(ev.w),
+      meKiller: ev.k !== 0 && ev.k === this.myId,
+      meVictim: ev.v === this.myId,
+    });
+  }
+
+  private onHePop(x: number, y: number): void {
+    const boom = this.add.circle(x, y, 20, 0xffcc66, 0.85).setDepth(30);
+    this.tweens.add({ targets: boom, radius: 130, alpha: 0, duration: 350, onComplete: () => boom.destroy() });
+    if (Math.hypot(x - this.predictor.pos.x, y - this.predictor.pos.y) < 250) this.cameras.main.shake(180, 0.006);
+    this.explosionGlow(x, y, 260);
+    sfx('he_boom', { x, y }, this.listener);
   }
 
   private onBuy(item: string): void {
@@ -438,7 +451,7 @@ export class GameScene extends Phaser.Scene {
     for (const [id, e] of this.entities) {
       const entry = this.roster.get(id);
       // gone, or side-swapped: rebuild the entity with the right texture/layer
-      if (!entry || entry.team !== e.team) {
+      if (entry?.team !== e.team) {
         e.sprite.destroy();
         e.label.destroy();
         this.entities.delete(id);
@@ -469,24 +482,54 @@ export class GameScene extends Phaser.Scene {
   update(_time: number, deltaMs: number): void {
     if (this.myId === -1 || !this.spawned) return;
 
+    this.sendInputs(deltaMs);
+    const me = this.updateOwnEntity();
+    const sampled = this.buffer.sample();
+    this.updateRemoteEntities(sampled);
+    const visionOrigin = this.updateCamera(me, sampled);
+    this.listener = { x: visionOrigin.x, y: visionOrigin.y };
+
+    this.renderBomb();
+    this.syncGroundItems();
+    this.syncNades();
+    const smokeOccluders = this.renderZones();
+    this.drawVision(visionOrigin, smokeOccluders);
+    this.drawTracers();
+  }
+
+  /** Buttons currently held (nothing while typing in chat). */
+  private pollButtons(): number {
+    if (this.chatOpen) return 0;
+    const held: Array<[boolean, number]> = [
+      [this.keys.W.isDown, BTN.UP],
+      [this.keys.S.isDown, BTN.DOWN],
+      [this.keys.A.isDown, BTN.LEFT],
+      [this.keys.D.isDown, BTN.RIGHT],
+      [this.keys.SHIFT.isDown, BTN.WALK],
+      [this.keys.R.isDown, BTN.RELOAD],
+      [this.keys.E.isDown, BTN.USE],
+      [this.keys.G.isDown, BTN.DROP],
+      [this.input.activePointer.isDown, BTN.ATTACK],
+    ];
+    let buttons = 0;
+    for (const [down, bit] of held) if (down) buttons |= bit;
+    return buttons;
+  }
+
+  /** Angle from our predicted position to the mouse cursor in world space. */
+  private pointerAim(): number {
+    const pointer = this.input.activePointer;
+    const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+    return Math.atan2(world.y - this.predictor.pos.y, world.x - this.predictor.pos.x);
+  }
+
+  /** Fixed-timestep input loop: predict locally and send one input per tick. */
+  private sendInputs(deltaMs: number): void {
     this.accumulator += Math.min(deltaMs, 250);
     while (this.accumulator >= TICK_MS) {
       this.accumulator -= TICK_MS;
-      const pointer = this.input.activePointer;
-      const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
-      const aim = Math.atan2(world.y - this.predictor.pos.y, world.x - this.predictor.pos.x);
-      let buttons = 0;
-      if (!this.chatOpen) {
-        if (this.keys.W.isDown) buttons |= BTN.UP;
-        if (this.keys.S.isDown) buttons |= BTN.DOWN;
-        if (this.keys.A.isDown) buttons |= BTN.LEFT;
-        if (this.keys.D.isDown) buttons |= BTN.RIGHT;
-        if (this.keys.SHIFT.isDown) buttons |= BTN.WALK;
-        if (this.keys.R.isDown) buttons |= BTN.RELOAD;
-        if (this.keys.E.isDown) buttons |= BTN.USE;
-        if (this.keys.G.isDown) buttons |= BTN.DROP;
-        if (this.input.activePointer.isDown) buttons |= BTN.ATTACK;
-      }
+      const aim = this.pointerAim();
+      const buttons = this.pollButtons();
       const mobility = this.me ? getWeapon(this.me.weapon).mobility : 1;
       const canMove = this.alive && this.match?.ph !== 'freeze';
       const input = this.predictor.buildInput(buttons, aim, this.lastServerTick, this.pendingSlot);
@@ -494,21 +537,21 @@ export class GameScene extends Phaser.Scene {
       this.predictor.applyLocal(input, canMove, mobility);
       this.conn.send(input);
     }
+  }
 
-    // own entity
+  private updateOwnEntity(): Entity | null {
     const me = this.ensureEntity(this.myId);
     if (me) {
       me.sprite.setVisible(this.alive);
       me.label.setVisible(this.alive);
       me.sprite.setPosition(this.predictor.pos.x, this.predictor.pos.y);
-      const pointer = this.input.activePointer;
-      const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
-      me.sprite.setRotation(Math.atan2(world.y - this.predictor.pos.y, world.x - this.predictor.pos.x));
+      me.sprite.setRotation(this.pointerAim());
       me.label.setPosition(this.predictor.pos.x, this.predictor.pos.y);
     }
+    return me;
+  }
 
-    // remote entities
-    const sampled = this.buffer.sample();
+  private updateRemoteEntities(sampled: SampledStates): void {
     for (const [id, state] of sampled) {
       if (id === this.myId) continue;
       const e = this.ensureEntity(id);
@@ -520,58 +563,63 @@ export class GameScene extends Phaser.Scene {
       e.sprite.setRotation(state.aim);
       e.label.setPosition(state.x, state.y);
     }
+  }
 
-    // camera: follow self while alive, otherwise spectate a living teammate
-    let visionOrigin = this.predictor.pos;
+  /** Camera: follow self while alive, otherwise spectate a living teammate. Returns the vision origin. */
+  private updateCamera(me: Entity | null, sampled: SampledStates): Vec2 {
     if (this.alive || this.match?.ph === 'waiting') {
       if (me && this.spectateTarget !== this.myId) {
         this.cameras.main.startFollow(me.sprite, true, 0.15, 0.15);
         this.spectateTarget = this.myId;
         this.game.events.emit('hud:spectate', null);
       }
-    } else {
-      const mates = [...sampled.entries()].filter(
-        ([id, s]) => id !== this.myId && this.roster.get(id)?.team === this.myTeam && (s.flags & PFLAG.ALIVE) !== 0,
-      );
-      if (mates.length > 0) {
-        const [targetId] = mates[this.spectateIndex % mates.length];
-        const target = this.entities.get(targetId);
-        if (target && this.spectateTarget !== targetId) {
-          this.cameras.main.startFollow(target.sprite, true, 0.12, 0.12);
-          this.spectateTarget = targetId;
-          this.game.events.emit('hud:spectate', this.nameOf(targetId));
-        }
-        const st = sampled.get(targetId)!;
-        visionOrigin = { x: st.x, y: st.y };
-      }
+      return this.predictor.pos;
     }
+    return this.spectateTeammate(sampled) ?? this.predictor.pos;
+  }
 
-    this.listener = { x: visionOrigin.x, y: visionOrigin.y };
+  private spectateTeammate(sampled: SampledStates): Vec2 | null {
+    const mates = [...sampled.entries()].filter(
+      ([id, s]) => id !== this.myId && this.roster.get(id)?.team === this.myTeam && (s.flags & PFLAG.ALIVE) !== 0,
+    );
+    if (mates.length === 0) return null;
+    const [targetId] = mates[this.spectateIndex % mates.length];
+    const target = this.entities.get(targetId);
+    if (target && this.spectateTarget !== targetId) {
+      this.cameras.main.startFollow(target.sprite, true, 0.12, 0.12);
+      this.spectateTarget = targetId;
+      this.game.events.emit('hud:spectate', this.nameOf(targetId));
+    }
+    const st = sampled.get(targetId)!;
+    return { x: st.x, y: st.y };
+  }
 
-    // bomb rendering (dropped or planted)
-    if (this.match?.bomb) {
-      const [bx, by, planted] = this.match.bomb;
-      this.bombSprite.setVisible(true).setPosition(bx, by);
-      if (planted === 1) {
-        const blink = Math.floor(this.time.now / 350) % 2 === 0;
-        this.bombSprite.setTint(blink ? 0xff4444 : 0xffffff);
-        // beep accelerates as the timer runs down: ~1s apart -> ~0.15s
-        const secsLeft = (this.match.end ?? 0) / TICK_RATE;
-        const interval = 150 + 850 * Math.min(1, Math.max(0, secsLeft / 40));
-        if (this.time.now >= this.nextBeepAt) {
-          sfx('bomb_beep', { x: bx, y: by }, this.listener);
-          this.nextBeepAt = this.time.now + interval;
-        }
-      } else {
-        this.bombSprite.clearTint();
-      }
-    } else {
+  /** Bomb rendering (dropped or planted, with an accelerating beep once planted). */
+  private renderBomb(): void {
+    if (!this.match?.bomb) {
       this.bombSprite.setVisible(false);
+      return;
     }
+    const [bx, by, planted] = this.match.bomb;
+    this.bombSprite.setVisible(true).setPosition(bx, by);
+    if (planted !== 1) {
+      this.bombSprite.clearTint();
+      return;
+    }
+    const blink = Math.floor(this.time.now / 350) % 2 === 0;
+    this.bombSprite.setTint(blink ? 0xff4444 : 0xffffff);
+    // beep accelerates as the timer runs down: ~1s apart -> ~0.15s
+    const secsLeft = (this.match.end ?? 0) / TICK_RATE;
+    const interval = 150 + 850 * Math.min(1, Math.max(0, secsLeft / 40));
+    if (this.time.now >= this.nextBeepAt) {
+      sfx('bomb_beep', { x: bx, y: by }, this.listener);
+      this.nextBeepAt = this.time.now + interval;
+    }
+  }
 
-    // ground weapons
+  private syncGroundItems(): void {
     const seen = new Set<number>();
-    for (const [itemId, weaponId, x, y] of this.groundItems) {
+    for (const [itemId, , x, y] of this.groundItems) {
       seen.add(itemId);
       let s = this.itemSprites.get(itemId);
       if (!s) {
@@ -579,7 +627,6 @@ export class GameScene extends Phaser.Scene {
         this.itemSprites.set(itemId, s);
       }
       s.setPosition(x, y);
-      void weaponId;
     }
     for (const [itemId, s] of this.itemSprites) {
       if (!seen.has(itemId)) {
@@ -587,15 +634,15 @@ export class GameScene extends Phaser.Scene {
         this.itemSprites.delete(itemId);
       }
     }
+  }
 
-    // in-flight grenades
+  private syncNades(): void {
     const seenNades = new Set<number>();
     for (const [nadeId, kind, x, y] of this.nades) {
       seenNades.add(nadeId);
       let s = this.nadeSprites.get(nadeId);
       if (!s) {
-        const color = kind === 'flash' ? 0xdddddd : kind === 'smoke' ? 0x999999 : kind === 'he' ? 0x556b2f : 0x8b3a1a;
-        s = this.add.circle(x, y, 5, color).setDepth(9).setStrokeStyle(1, 0x000000, 0.6);
+        s = this.add.circle(x, y, 5, nadeColor(kind)).setDepth(9).setStrokeStyle(1, 0x000000, 0.6);
         this.nadeSprites.set(nadeId, s);
       }
       s.setPosition(x, y);
@@ -606,8 +653,10 @@ export class GameScene extends Phaser.Scene {
         this.nadeSprites.delete(nadeId);
       }
     }
+  }
 
-    // smoke / fire zones (Kenney particle textures; vector fallback when missing)
+  /** Smoke / fire zones (Kenney particle textures; vector fallback when missing). Returns smoke occluders for vision. */
+  private renderZones(): Occluder[] {
     const smokeOccluders = this.zones.filter((z) => z[1] === 'smoke').map((z) => ({ pos: { x: z[2], y: z[3] }, radius: z[4] }));
     const smokeTex = this.textures.exists('smokepuff');
     const flameTex = this.textures.exists('flame') && this.textures.exists('glow');
@@ -615,27 +664,38 @@ export class GameScene extends Phaser.Scene {
     this.zoneGfx.clear();
     for (const [zid, kind, x, y, radius, ticksLeft] of this.zones) {
       seenZones.add(zid);
-      if (kind === 'smoke') {
-        if (smokeTex) {
-          this.updateSmokeCloud(zid, x, y, radius, ticksLeft);
-        } else {
-          this.zoneGfx.fillStyle(0xcfcfcf, 0.92);
-          this.zoneGfx.fillCircle(x, y, radius);
-          this.zoneGfx.lineStyle(2, 0xb0b0b0, 0.5);
-          this.zoneGfx.strokeCircle(x, y, radius);
-        }
-      } else {
-        if (flameTex) {
-          this.updateFireFx(zid, x, y, radius);
-        } else {
-          const flicker = 0.75 + 0.15 * Math.sin(this.time.now / 90 + x);
-          this.zoneGfx.fillStyle(0xff6a1a, 0.55 * flicker);
-          this.zoneGfx.fillCircle(x, y, radius);
-          this.zoneGfx.fillStyle(0xffcc55, 0.45 * flicker);
-          this.zoneGfx.fillCircle(x, y, radius * 0.55);
-        }
-      }
+      if (kind === 'smoke') this.renderSmokeZone(smokeTex, zid, x, y, radius, ticksLeft);
+      else this.renderFireZone(flameTex, zid, x, y, radius);
     }
+    this.pruneZoneFx(seenZones);
+    return smokeOccluders;
+  }
+
+  private renderSmokeZone(textured: boolean, zid: number, x: number, y: number, radius: number, ticksLeft: number): void {
+    if (textured) {
+      this.updateSmokeCloud(zid, x, y, radius, ticksLeft);
+      return;
+    }
+    this.zoneGfx.fillStyle(0xcfcfcf, 0.92);
+    this.zoneGfx.fillCircle(x, y, radius);
+    this.zoneGfx.lineStyle(2, 0xb0b0b0, 0.5);
+    this.zoneGfx.strokeCircle(x, y, radius);
+  }
+
+  private renderFireZone(textured: boolean, zid: number, x: number, y: number, radius: number): void {
+    if (textured) {
+      this.updateFireFx(zid, x, y, radius);
+      return;
+    }
+    const flicker = 0.75 + 0.15 * Math.sin(this.time.now / 90 + x);
+    this.zoneGfx.fillStyle(0xff6a1a, 0.55 * flicker);
+    this.zoneGfx.fillCircle(x, y, radius);
+    this.zoneGfx.fillStyle(0xffcc55, 0.45 * flicker);
+    this.zoneGfx.fillCircle(x, y, radius * 0.55);
+  }
+
+  /** Destroy smoke / fire visuals whose zone is gone from the snapshot. */
+  private pruneZoneFx(seenZones: Set<number>): void {
     for (const [zid, puffs] of this.smokeClouds) {
       if (!seenZones.has(zid)) {
         puffs.forEach((img) => img.destroy());
@@ -649,9 +709,11 @@ export class GameScene extends Phaser.Scene {
         this.fireFx.delete(zid);
       }
     }
+  }
 
-    // vision polygon from the camera's subject (smoke blocks LOS same as walls)
-    const poly = visibilityPolygon(visionOrigin, this.map, smokeOccluders);
+  /** Vision polygon from the camera's subject (smoke blocks LOS same as walls). */
+  private drawVision(origin: Vec2, smokeOccluders: Occluder[]): void {
+    const poly = visibilityPolygon(origin, this.map, smokeOccluders);
     this.visionGfx.clear();
     this.visionGfx.fillStyle(0xffffff, 1);
     this.visionGfx.beginPath();
@@ -659,8 +721,9 @@ export class GameScene extends Phaser.Scene {
     for (let i = 1; i < poly.length; i++) this.visionGfx.lineTo(poly[i].x, poly[i].y);
     this.visionGfx.closePath();
     this.visionGfx.fillPath();
+  }
 
-    // tracers
+  private drawTracers(): void {
     const now = this.time.now;
     this.tracers = this.tracers.filter((t) => t.until > now);
     this.tracerGfx.clear();

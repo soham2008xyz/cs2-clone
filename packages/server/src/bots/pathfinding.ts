@@ -31,6 +31,67 @@ const MAX_ITERATIONS = 20000;
 
 export type BlockedFn = (tx: number, ty: number) => boolean;
 
+/** Pop the open node with the lowest f score (linear scan — open sets stay small on these maps). */
+function popLowest(open: Set<number>, nodes: Map<number, NodeRec>): number {
+  let curKey = -1;
+  let bestF = Infinity;
+  for (const k of open) {
+    const f = nodes.get(k)!.f;
+    if (f < bestF) {
+      bestF = f;
+      curKey = k;
+    }
+  }
+  open.delete(curKey);
+  return curKey;
+}
+
+/** Diagonal moves may not squeeze between two orthogonally adjacent blocked tiles. */
+function cutsCorner(blocked: BlockedFn, cur: NodeRec, dx: number, dy: number): boolean {
+  return dx !== 0 && dy !== 0 && (blocked(cur.tx + dx, cur.ty) || blocked(cur.tx, cur.ty + dy));
+}
+
+interface SearchState {
+  nodes: Map<number, NodeRec>;
+  open: Set<number>;
+  closed: Set<number>;
+  blocked: BlockedFn;
+  gtx: number;
+  gty: number;
+}
+
+/** Relax every walkable neighbor of `cur`, adding improved nodes to the open set. */
+function expandNeighbors(state: SearchState, cur: NodeRec, curKey: number): void {
+  const { nodes, open, closed, blocked, gtx, gty } = state;
+  for (const [dx, dy, cost] of NEIGHBORS) {
+    const ntx = cur.tx + dx;
+    const nty = cur.ty + dy;
+    if (blocked(ntx, nty) || cutsCorner(blocked, cur, dx, dy)) continue;
+
+    const nk = nodeKey(ntx, nty);
+    if (closed.has(nk)) continue;
+    const tentativeG = cur.g + cost;
+    const existing = nodes.get(nk);
+    if (!existing || tentativeG < existing.g) {
+      nodes.set(nk, { tx: ntx, ty: nty, g: tentativeG, f: tentativeG + octile(ntx, nty, gtx, gty), parent: curKey });
+      open.add(nk);
+    }
+  }
+}
+
+/** Walk parent links back from the goal, returning tile-center waypoints (excluding the start). */
+function reconstructPath(nodes: Map<number, NodeRec>, goalKey: number, startKey: number): Vec2[] {
+  const path: Vec2[] = [];
+  let k: number | null = goalKey;
+  while (k !== null && k !== startKey) {
+    const n: NodeRec = nodes.get(k)!;
+    path.push({ x: (n.tx + 0.5) * TILE_SIZE, y: (n.ty + 0.5) * TILE_SIZE });
+    k = n.parent;
+  }
+  path.reverse();
+  return path;
+}
+
 /**
  * A* over the walkable tile grid (8-directional, no corner-cutting through
  * two orthogonal walls). Returns tile-center waypoints from just after the
@@ -49,57 +110,17 @@ export function findPath(map: CompiledMap, startPx: Vec2, goalPx: Vec2, isBlocke
   const startKey = nodeKey(stx, sty);
   nodes.set(startKey, { tx: stx, ty: sty, g: 0, f: octile(stx, sty, gtx, gty), parent: null });
 
-  const open = new Set<number>([startKey]);
-  const closed = new Set<number>();
-  let goalKey: number | null = null;
+  const state: SearchState = { nodes, open: new Set<number>([startKey]), closed: new Set<number>(), blocked, gtx, gty };
 
-  for (let iter = 0; iter < MAX_ITERATIONS && open.size > 0; iter++) {
-    let curKey = -1;
-    let bestF = Infinity;
-    for (const k of open) {
-      const f = nodes.get(k)!.f;
-      if (f < bestF) {
-        bestF = f;
-        curKey = k;
-      }
-    }
+  for (let iter = 0; iter < MAX_ITERATIONS && state.open.size > 0; iter++) {
+    const curKey = popLowest(state.open, nodes);
     const cur = nodes.get(curKey)!;
-    open.delete(curKey);
-    closed.add(curKey);
+    state.closed.add(curKey);
 
-    if (cur.tx === gtx && cur.ty === gty) {
-      goalKey = curKey;
-      break;
-    }
-
-    for (const [dx, dy, cost] of NEIGHBORS) {
-      const ntx = cur.tx + dx;
-      const nty = cur.ty + dy;
-      if (blocked(ntx, nty)) continue;
-      if (dx !== 0 && dy !== 0 && (blocked(cur.tx + dx, cur.ty) || blocked(cur.tx, cur.ty + dy))) continue;
-
-      const nk = nodeKey(ntx, nty);
-      if (closed.has(nk)) continue;
-      const tentativeG = cur.g + cost;
-      const existing = nodes.get(nk);
-      if (!existing || tentativeG < existing.g) {
-        nodes.set(nk, { tx: ntx, ty: nty, g: tentativeG, f: tentativeG + octile(ntx, nty, gtx, gty), parent: curKey });
-        open.add(nk);
-      }
-    }
+    if (cur.tx === gtx && cur.ty === gty) return reconstructPath(nodes, curKey, startKey);
+    expandNeighbors(state, cur, curKey);
   }
-
-  if (goalKey === null) return [];
-
-  const path: Vec2[] = [];
-  let k: number | null = goalKey;
-  while (k !== null && k !== startKey) {
-    const n: NodeRec = nodes.get(k)!;
-    path.push({ x: (n.tx + 0.5) * TILE_SIZE, y: (n.ty + 0.5) * TILE_SIZE });
-    k = n.parent;
-  }
-  path.reverse();
-  return path;
+  return [];
 }
 
 function hasDirectLine(map: CompiledMap, a: Vec2, b: Vec2, isBlocked?: BlockedFn): boolean {
