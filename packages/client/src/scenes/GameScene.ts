@@ -7,7 +7,6 @@ import {
   PFLAG,
   TICK_MS,
   TICK_RATE,
-  visibilityPolygon,
   WEAPONS,
   type GrenadeKind,
   type CompiledMap,
@@ -31,6 +30,7 @@ import { Connection, serverUrl } from '../net/connection.js';
 import { Predictor } from '../net/prediction.js';
 import { SnapshotBuffer, type RemoteState } from '../net/interpolation.js';
 import { renderMap } from '../render/mapRender.js';
+import { VisionCache } from '../render/visionCache.js';
 import { session } from '../session.js';
 
 interface Entity {
@@ -72,6 +72,7 @@ export class GameScene extends Phaser.Scene {
   private enemyLayer!: Phaser.GameObjects.Container;
   private friendLayer!: Phaser.GameObjects.Container;
   private visionGfx!: Phaser.GameObjects.Graphics;
+  private readonly visionCache = new VisionCache();
   private darkness!: Phaser.GameObjects.Graphics;
   private tracerGfx!: Phaser.GameObjects.Graphics;
   private shotFxMask!: Phaser.Display.Masks.GeometryMask;
@@ -728,7 +729,8 @@ export class GameScene extends Phaser.Scene {
 
   /** Vision polygon from the camera's subject (smoke blocks LOS same as walls). */
   private drawVision(origin: Vec2, smokeOccluders: Occluder[]): void {
-    const poly = visibilityPolygon(origin, this.map, smokeOccluders);
+    const { poly, changed } = this.visionCache.update(origin, this.map, smokeOccluders);
+    if (!changed) return;
     this.visionGfx.clear();
     this.visionGfx.fillStyle(0xffffff, 1);
     this.visionGfx.beginPath();
