@@ -36,7 +36,7 @@ function ensureCtx(): AudioContext | null {
 /** Call from a user gesture; browsers keep contexts suspended until then. */
 export function unlockAudio(): void {
   const c = ensureCtx();
-  if (c && c.state === 'suspended') void c.resume();
+  if (c?.state === 'suspended') void c.resume();
 }
 
 export function toggleMute(): boolean {
@@ -52,7 +52,7 @@ export function isMuted(): boolean {
 /** Fire one synth voice. `pan` −1..1, `gainScale` 0..1, `delay` seconds. */
 export function play(params: SynthParams, pan = 0, gainScale = 1, delay = 0): void {
   const c = ensureCtx();
-  if (!c || c.state !== 'running' || muted || gainScale <= 0) return;
+  if (c?.state !== 'running' || muted || gainScale <= 0) return;
   const { type = 'square', freq = 440, slide = 1, duration = 0.1, attack = 0.005, volume = 0.3 } = params;
   const t0 = c.currentTime + delay;
 
@@ -68,7 +68,7 @@ export function play(params: SynthParams, pan = 0, gainScale = 1, delay = 0): vo
     const len = Math.max(1, Math.ceil(c.sampleRate * duration));
     const buf = c.createBuffer(1, len, c.sampleRate);
     const data = buf.getChannelData(0);
-    for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+    for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1; // NOSONAR - non-cryptographic: white-noise audio samples
     const src = c.createBufferSource();
     src.buffer = buf;
     if (params.filterFreq) {
