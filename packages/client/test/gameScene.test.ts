@@ -63,6 +63,7 @@ interface GameInternals {
   spawned: boolean;
   alive: boolean;
   chatOpen: boolean;
+  buyOpen: boolean;
   match: MatchSnap | null;
   me: SelfState | null;
   roster: Map<number, RosterEntry>;
@@ -154,6 +155,29 @@ describe('GameScene.update — input', () => {
     g.keys.D.isDown = true;
     g.update(0, TICK_MS);
     expect((g.conn.send.mock.calls[0][0] as { b: number }).b).toBe(0);
+  });
+
+  it('drops ATTACK while the buy menu is open but keeps movement', () => {
+    g.game.events.on('buy:toggle', (g as unknown as { onBuyToggle: (o: boolean) => void }).onBuyToggle, g);
+    g.game.events.emit('buy:toggle', true);
+    g.keys.W.isDown = true;
+    g.input.activePointer.isDown = true;
+    g.update(0, TICK_MS);
+    expect((g.conn.send.mock.calls[0][0] as { b: number }).b).toBe(BTN.UP);
+  });
+
+  it('keeps a click held across the menu closing from firing until released', () => {
+    g.game.events.on('buy:toggle', (g as unknown as { onBuyToggle: (o: boolean) => void }).onBuyToggle, g);
+    g.game.events.emit('buy:toggle', true);
+    g.input.activePointer.isDown = true;
+    g.game.events.emit('buy:toggle', false);
+    g.update(0, TICK_MS);
+    expect((g.conn.send.mock.calls[0][0] as { b: number }).b).toBe(0);
+    g.input.activePointer.isDown = false;
+    g.update(0, TICK_MS);
+    g.input.activePointer.isDown = true;
+    g.update(0, TICK_MS);
+    expect((g.conn.send.mock.calls[2][0] as { b: number }).b).toBe(BTN.ATTACK);
   });
 
   it('forwards a pending weapon-slot switch exactly once', () => {
