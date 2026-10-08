@@ -100,7 +100,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
 };
 
 export const getWeapon = (id: string): WeaponDef => {
-  const w = WEAPONS[id];
+  const w = Object.hasOwn(WEAPONS, id) ? WEAPONS[id] : undefined;
   if (!w) throw new Error(`unknown weapon: ${id}`);
   return w;
 };

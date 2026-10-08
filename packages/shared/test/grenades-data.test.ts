@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { getGrenade, GRENADES, isFireGrenade } from '../src/sim/grenades.data.js';
 
+describe('getGrenade', () => {
+  it('throws for ids inherited from Object.prototype', () => {
+    for (const id of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+      expect(() => getGrenade(id)).toThrow();
+    }
+  });
+});
+
 describe('grenade data sanity', () => {
   for (const g of Object.values(GRENADES)) {
     it(`${g.id}: fields are within sane bounds`, () => {
