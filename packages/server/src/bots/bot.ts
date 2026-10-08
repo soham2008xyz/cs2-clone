@@ -52,6 +52,9 @@ const nearestSite = (map: CompiledMap, pos: Vec2): 'A' | 'B' => {
   return dist(pos, A) <= dist(pos, B) ? 'A' : 'B';
 };
 
+/** Post-plant, a T within this distance of the bomb stops and holds. */
+const T_GUARD_RADIUS = TILE_SIZE * 3;
+
 /** Site center with a same-map fallback — defends computeGoal against a null goal even if a caller ever passes a stale/invalid site. */
 const siteGoal = (map: CompiledMap, site: 'A' | 'B'): Vec2 | null => map.siteCenters[site] ?? map.siteCenters[site === 'A' ? 'B' : 'A'];
 
@@ -262,8 +265,10 @@ export class BotController {
   private computeGoal(room: Room, p: PlayerConn, tick: number): Vec2 | null {
     const map = room.map;
     if (room.phase === 'planted') {
-      // post-plant: CTs converge on the bomb, Ts hold their site
-      return p.team === 'CT' ? room.bombInfo.pos : siteGoal(map, this.assignedSite);
+      // post-plant: CTs converge on the bomb, Ts guard wherever it was planted (not their assigned site)
+      const bombPos = room.bombInfo.pos;
+      if (p.team === 'CT') return bombPos;
+      return dist(p.pos, bombPos) <= T_GUARD_RADIUS ? null : bombPos; // hold near it, don't stand on it
     }
     if (p.hp < SAVE_HP && !p.hasBomb) return map.spawns[p.team][0]; // save the gun
     if (p.team === 'T' && !p.hasBomb && room.bombInfo.mode === 'dropped') return room.bombInfo.pos; // retrieve it — don't strand the objective

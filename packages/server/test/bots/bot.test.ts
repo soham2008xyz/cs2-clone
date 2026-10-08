@@ -45,6 +45,18 @@ function botTestMap(): string {
   return def.name;
 }
 
+/** Like botTestMap, but the T spawn sits mid-corridor with site A behind it (left). */
+function midSpawnMap(): string {
+  const b = new MapBuilder(64, 8);
+  b.carve(1, 1, 62, 6);
+  b.site('A', 5, 3, 3, 3);
+  b.spawn('T', 20, 4);
+  b.spawn('CT', 61, 4);
+  const def = b.build('bot-mid-spawn-arena', 'Bot Mid Spawn Arena');
+  registerMap(def);
+  return def.name;
+}
+
 describe('BotController (structural smoke tests)', () => {
   beforeEach(() => {
     vi.spyOn(Math, 'random').mockReturnValue(0.1); // < 0.5: assignedSite always 'A'
@@ -131,5 +143,38 @@ describe('BotController (structural smoke tests)', () => {
     const startDist = dist(bot.pos, dropPos);
     step(room, 90); // 1.5s: plenty of time to start walking toward the bomb
     expect(dist(bot.pos, dropPos)).toBeLessThan(startDist);
+  });
+
+  it('post-plant, a T bot guards the planted bomb instead of its assigned site', () => {
+    const mapName = midSpawnMap();
+    const room = new Room(mapName, FAST);
+    const bot = room.addBot('T', 'normal'); // assignedSite 'A' (near T spawn) by the Math.random mock
+    room.addPlayer(null, 'Human', 'CT'); // far away: won't distract the bot
+    stepUntil(room, () => room.phase === 'live');
+
+    // bomb planted away from site A, on the far side of the bot from it
+    const bombPos: Vec2 = { x: 30 * TILE_SIZE, y: 4 * TILE_SIZE };
+    bombGuts(room).bomb = { mode: 'planted', pos: bombPos, carrierId: 0, explodeTick: room.tick + 100000 };
+    (room as unknown as { phase: string }).phase = 'planted';
+
+    const startDist = dist(bot.pos, bombPos);
+    step(room, 90);
+    expect(dist(bot.pos, bombPos)).toBeLessThan(startDist);
+  });
+
+  it('post-plant, a T bot holds near the bomb instead of standing on it', () => {
+    const room = new Room(midSpawnMap(), FAST);
+    const bot = room.addBot('T', 'normal');
+    room.addPlayer(null, 'Human', 'CT');
+    stepUntil(room, () => room.phase === 'live');
+
+    const bombPos: Vec2 = { x: 30 * TILE_SIZE, y: 4 * TILE_SIZE };
+    bot.pos = { x: bombPos.x - TILE_SIZE, y: bombPos.y };
+    bombGuts(room).bomb = { mode: 'planted', pos: bombPos, carrierId: 0, explodeTick: room.tick + 100000 };
+    (room as unknown as { phase: string }).phase = 'planted';
+
+    const before = { ...bot.pos };
+    step(room, 60);
+    expect(dist(bot.pos, before)).toBeLessThan(TILE_SIZE / 2);
   });
 });
