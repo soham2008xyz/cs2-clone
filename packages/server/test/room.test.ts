@@ -828,3 +828,81 @@ describe('buy window', () => {
     expect(room.canBuy(t.id)).toBe(false);
   });
 });
+
+describe('input rate limiting', () => {
+  /** Live room with one T; returns the player placed in open floor facing a long run to the right. */
+  function runner() {
+    const { room } = liveRoom();
+    const p = room.addPlayer(null, 'T1', 'T');
+    room.addPlayer(null, 'CT1', 'CT');
+    stepUntil(room, () => room.phase === 'live');
+    const start = { ...p.pos };
+    let seq = 0;
+    const sendN = (n: number, b = BTN.RIGHT): void => {
+      for (let i = 0; i < n; i++) room.handleInput(p.id, { t: 'i', s: ++seq, b, a: 0 });
+    };
+    return { room, p, start, sendN, seq: () => seq };
+  }
+
+  it('flooding 8 inputs per tick moves no further than 1 per tick (plus the burst allowance)', () => {
+    const normal = runner();
+    const flood = runner();
+    // Same spawn for both runs so wall contact cannot differ.
+    flood.p.pos = { ...normal.p.pos };
+    const origin = { ...normal.p.pos };
+    for (let i = 0; i < 60; i++) {
+      normal.sendN(1);
+      step(normal.room);
+      flood.sendN(8);
+      step(flood.room);
+    }
+    const d = (p: PlayerConn): number => Math.hypot(p.pos.x - origin.x, p.pos.y - origin.y);
+    expect(d(normal.p)).toBeGreaterThan(0);
+    // Burst allowance: at most 15 extra steps of movement, one step ~ speed * TICK_DT.
+    const step1 = d(normal.p) / 60;
+    expect(d(flood.p)).toBeLessThanOrEqual(d(normal.p) + 15 * step1 + 1);
+  });
+
+  it('applies a short legitimate burst in full after a gap', () => {
+    const a = runner();
+    const b = runner();
+    b.p.pos = { ...a.p.pos };
+    a.sendN(1);
+    step(a.room, 1);
+    step(a.room, 2); // 2-tick gap
+    a.sendN(3); // burst
+    step(a.room, 1);
+    // reference: the same 4 inputs, one per tick
+    for (let i = 0; i < 4; i++) {
+      b.sendN(1);
+      step(b.room, 1);
+    }
+    expect(a.p.pos.x - a.start.x).toBeCloseTo(b.p.pos.x - a.start.x, 5);
+    expect(a.p.lastSeq).toBe(4);
+  });
+
+  it('keeps acking lastSeq and applying aim/buttons while over budget', () => {
+    const { room, p, sendN, seq } = runner();
+    sendN(40);
+    step(room, 1);
+    expect(p.lastSeq).toBeGreaterThan(0);
+    expect(p.lastSeq).toBe(seq());
+    expect(p.buttons).toBe(BTN.RIGHT);
+  });
+});
+
+describe('input rate limiting: no banked credit', () => {
+  it('does not carry a movement burst out of freeze time', () => {
+    const room = new Room('testarena', FAST);
+    const p = room.addPlayer(null, 'T1', 'T');
+    room.addPlayer(null, 'CT1', 'CT');
+    stepUntil(room, () => room.phase === 'freeze');
+    step(room, 2); // idle through freeze, credit must stay empty
+    stepUntil(room, () => room.phase === 'live');
+    const start = { ...p.pos };
+    for (let i = 0; i < 15; i++) room.handleInput(p.id, { t: 'i', s: i + 1, b: BTN.RIGHT, a: 0 });
+    step(room, 1);
+    // at most ~2 steps (one earned this tick), not 15
+    expect(Math.abs(p.pos.x - start.x)).toBeLessThan(10);
+  });
+});
