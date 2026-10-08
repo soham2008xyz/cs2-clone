@@ -11,6 +11,7 @@ const PORT = Number(process.env.PORT ?? 8090);
 // CS2D_FAST=1 shrinks round timings for integration tests
 const FAST_TIMINGS = process.env.CS2D_FAST === '1' ? { freeze: 1, round: 20, bomb: 4, plant: 0.5, defuse: 1, defuseKit: 0.5, roundEnd: 1 } : {};
 const REAP_INTERVAL_MS = 30000;
+const MAX_WS_BYTES = 16 * 1024; // largest valid client message is ~1 KB of chat; ws closes the socket on anything bigger
 const MAX_BODY_BYTES = 16 * 1024; // POST /rooms bodies are tiny; reject anything larger
 
 const manager = new RoomManager();
@@ -112,9 +113,15 @@ const http = createServer(async (req, res) => {
   serveClient(url.pathname, res);
 });
 
-const wss = new WebSocketServer({ server: http });
+const wss = new WebSocketServer({ server: http, maxPayload: MAX_WS_BYTES });
 
 wss.on('connection', (ws: WebSocket, req) => {
+  // Register first: a protocol error (bad frame, oversized payload) must close this socket, not crash the process.
+  ws.on('error', (err) => {
+    console.warn(`[ws] socket error: ${err.message}`);
+    ws.terminate();
+  });
+
   const code = parseRequestUrl(req.url).searchParams.get('room') ?? '';
   const entry = manager.get(code);
   if (!entry) {
@@ -124,12 +131,6 @@ wss.on('connection', (ws: WebSocket, req) => {
   const { room, meta } = entry;
   let playerId: number | null = null;
   let playerTeam: import('@cs2d/shared').TeamId | null = null;
-
-  // A protocol-level error (bad frame, oversized payload) must close this socket, not crash the process.
-  ws.on('error', (err) => {
-    console.warn(`[room ${meta.code}] socket error: ${err.message}`);
-    ws.terminate();
-  });
 
   const dispatch = (msg: ClientMsg): void => {
     if (msg.t === 'join' && playerId === null) {

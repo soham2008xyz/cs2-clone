@@ -88,6 +88,7 @@ async function main() {
     ['bots with string count', [{ t: 'join', name: 'a' }, { t: 'bots', perTeam: 'many' }]],
     ['team with bad value', [{ t: 'join', name: 'a' }, { t: 'team', team: 9 }]],
     ['ping without t0', [{ t: 'join', name: 'a' }, { t: 'ping' }]],
+    ['buy __proto__', [{ t: 'join', name: 'a' }, { t: 'buy', item: '__proto__' }, { t: 'buy', item: 'constructor' }]],
     ['non-object JSON', ['null', '5', '[]', '"s"', 'not json']],
   ];
   for (const [label, frames] of cases) {
@@ -100,6 +101,12 @@ async function main() {
   }
 
   await sendBadFrame(code);
+  await sendBadFrame('ZZZZ'); // unknown room: error handler must already be attached
+  const big = await openWs(code);
+  big.on('error', () => {});
+  big.send(JSON.stringify({ t: 'ping', t0: 1, pad: 'x'.repeat(200 * 1024) })); // over maxPayload: socket closes
+  await sleep(200);
+  big.terminate();
   await sleep(200);
   if (!(await alive())) return fail('server died after raw invalid-opcode frame');
   console.log('✓ survived: invalid opcode frame');

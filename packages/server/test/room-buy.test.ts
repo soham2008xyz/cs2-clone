@@ -27,6 +27,18 @@ function liveRoom(timings = FAST): Room {
   return new Room('testarena', timings);
 }
 
+describe('handleBuy: prototype keys', () => {
+  it.each(['__proto__', 'constructor', 'toString', 'hasOwnProperty'])('ignores %s as an item id', (item) => {
+    const room = liveRoom();
+    const t = room.addPlayer(null, 'T1', 'T');
+    room.addPlayer(null, 'CT1', 'CT');
+    stepUntil(room, () => room.phase === 'freeze');
+    const money = t.money;
+    room.handleBuy(t.id, item);
+    expect(t.money).toBe(money);
+  });
+});
+
 describe('handleBuy: window & buyzone gating', () => {
   it('rejects a buy while outside the buyzone', () => {
     const room = liveRoom();
