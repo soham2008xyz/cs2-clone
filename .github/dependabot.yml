@@ -38,6 +38,12 @@ updates:
       - dependency-name: "phaser"
         update-types:
           - "version-update:semver-major"
+      # The @types/node major must match the Node runtime major in `engines`
+      # (Node 24). Newer types let code use Node APIs the runtime lacks, and
+      # typecheck would not catch it. Bump by hand when the runtime moves.
+      - dependency-name: "@types/node"
+        update-types:
+          - "version-update:semver-major"
     labels:
       - "dependencies"
 
