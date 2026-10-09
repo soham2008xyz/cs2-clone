@@ -51,6 +51,15 @@ jobs:
       - name: Build client
         run: npm run build -w @cs2d/client
 
+      # Scanner plugins and analyzers; skipped with the scan when there is no token
+      - name: Cache SonarCloud packages
+        if: matrix.node-version == 24 && env.SONAR_TOKEN != ''
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
+
       # Skipped when SONAR_TOKEN is unavailable (e.g. PRs from forks)
       - name: SonarCloud scan
         if: matrix.node-version == 24 && env.SONAR_TOKEN != ''
