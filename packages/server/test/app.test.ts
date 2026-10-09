@@ -301,7 +301,7 @@ describe('WebSocket', () => {
     vi.spyOn(room, 'phase', 'get').mockReturnValue('live');
     c.ws.close();
     await c.closed;
-    await vi.waitFor(() => expect([...room.players.values()].filter((p) => p.ws === null && p.name.startsWith('Bot_')).length).toBe(1));
+    await vi.waitFor(() => expect([...room.players.values()].filter((p) => p.ws === null && p.name.startsWith('Bot_'))).toHaveLength(1));
   });
 
   it('does not backfill when the room is still waiting', async () => {
