@@ -184,7 +184,7 @@ export const MAX_NAME_LEN = 64;
 export const MAX_CHAT_LEN = 1000;
 export const MAX_ITEM_LEN = 32;
 const BTN_MASK = Object.values(BTN).reduce((a, b) => a | b, 0);
-const DIFFICULTIES = ['easy', 'normal', 'hard'];
+const DIFFICULTIES = new Set(['easy', 'normal', 'hard']);
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
@@ -201,38 +201,12 @@ export function validateClientMsg(v: unknown): ClientMsg | null {
     case 'join':
       if (!isStr(v.name, MAX_NAME_LEN) || (v.team !== undefined && !isTeam(v.team))) return null;
       return v.team === undefined ? { t: 'join', name: v.name } : { t: 'join', name: v.name, team: v.team };
-    case 'i': {
-      if (!isNum(v.s) || !isNum(v.a)) return null;
-      if (!Number.isInteger(v.b) || (v.b as number) < 0 || ((v.b as number) & ~BTN_MASK) !== 0) return null;
-      const msg: InputMsg = { t: 'i', s: v.s, b: v.b as number, a: v.a };
-      if (v.w !== undefined) {
-        if (!Number.isInteger(v.w) || (v.w as number) < 1 || (v.w as number) > 4) return null;
-        msg.w = v.w as number;
-      }
-      if (v.k !== undefined) {
-        if (!isNum(v.k)) return null;
-        msg.k = v.k;
-      }
-      if (v.sp !== undefined) {
-        if (!Number.isInteger(v.sp) || (v.sp as number) < 0) return null;
-        msg.sp = v.sp as number;
-      }
-      return msg;
-    }
+    case 'i':
+      return validateInput(v);
     case 'buy':
       return isStr(v.item, MAX_ITEM_LEN) ? { t: 'buy', item: v.item } : null;
-    case 'bots': {
-      const msg: FillBotsMsg = { t: 'bots' };
-      if (v.perTeam !== undefined) {
-        if (!isNum(v.perTeam)) return null;
-        msg.perTeam = v.perTeam;
-      }
-      if (v.difficulty !== undefined) {
-        if (typeof v.difficulty !== 'string' || !DIFFICULTIES.includes(v.difficulty)) return null;
-        msg.difficulty = v.difficulty as FillBotsMsg['difficulty'];
-      }
-      return msg;
-    }
+    case 'bots':
+      return validateFillBots(v);
     case 'team':
       return isTeam(v.team) ? { t: 'team', team: v.team } : null;
     case 'chat':
@@ -242,6 +216,31 @@ export function validateClientMsg(v: unknown): ClientMsg | null {
     default:
       return null;
   }
+}
+
+const isIntIn = (v: unknown, min: number, max = Number.POSITIVE_INFINITY): v is number =>
+  Number.isInteger(v) && (v as number) >= min && (v as number) <= max;
+
+function validateInput(v: Record<string, unknown>): InputMsg | null {
+  if (!isNum(v.s) || !isNum(v.a)) return null;
+  if (!Number.isInteger(v.b) || (v.b as number) < 0 || ((v.b as number) & ~BTN_MASK) !== 0) return null;
+  if (v.w !== undefined && !isIntIn(v.w, 1, 4)) return null;
+  if (v.k !== undefined && !isNum(v.k)) return null;
+  if (v.sp !== undefined && !isIntIn(v.sp, 0)) return null;
+  const msg: InputMsg = { t: 'i', s: v.s, b: v.b as number, a: v.a };
+  if (v.w !== undefined) msg.w = v.w as number;
+  if (v.k !== undefined) msg.k = v.k as number;
+  if (v.sp !== undefined) msg.sp = v.sp as number;
+  return msg;
+}
+
+function validateFillBots(v: Record<string, unknown>): FillBotsMsg | null {
+  if (v.perTeam !== undefined && !isNum(v.perTeam)) return null;
+  if (v.difficulty !== undefined && (typeof v.difficulty !== 'string' || !DIFFICULTIES.has(v.difficulty))) return null;
+  const msg: FillBotsMsg = { t: 'bots' };
+  if (v.perTeam !== undefined) msg.perTeam = v.perTeam as number;
+  if (v.difficulty !== undefined) msg.difficulty = v.difficulty as FillBotsMsg['difficulty'];
+  return msg;
 }
 
 /** Parse and validate a raw client frame. Returns null for bad JSON or a bad shape. */
