@@ -35,6 +35,14 @@ async function alive() {
   }
 }
 
+/** Poll until the server answers, up to `tries` attempts. */
+async function waitForServer(tries = 60) {
+  if (await alive()) return true;
+  if (tries <= 1) return false;
+  await sleep(250);
+  return waitForServer(tries - 1);
+}
+
 function openWs(code) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(`ws://localhost:${PORT}?room=${code}`);
@@ -72,26 +80,25 @@ async function main() {
     stdio: ['ignore', 'ignore', 'inherit'],
   });
   server.on('exit', (c) => (exited = c ?? 1));
-  for (let i = 0; i < 60 && !(await alive()); i++) await sleep(250);
-  if (!(await alive())) return fail('server did not start');
+  if (!(await waitForServer())) return fail('server did not start');
 
   const created = await fetch(`${base}/rooms`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ map: 'testarena' }) });
   const { code } = await created.json();
 
   const cases = [
-    ['join without name', [{ t: 'join' }]],
-    ['join with object name', [{ t: 'join', name: {} }]],
-    ['chat text is a number', [{ t: 'join', name: 'a' }, { t: 'chat', text: 5 }]],
-    ['input with bad types', [{ t: 'join', name: 'a' }, { t: 'i', s: 'x', b: [], a: null, w: 'x', k: {} }]],
-    ['input with fractional slot', [{ t: 'join', name: 'a' }, { t: 'i', s: 1, b: 0, a: 0, w: 1.5 }]],
-    ['buy with numeric item', [{ t: 'join', name: 'a' }, { t: 'buy', item: 7 }]],
-    ['bots with string count', [{ t: 'join', name: 'a' }, { t: 'bots', perTeam: 'many' }]],
-    ['team with bad value', [{ t: 'join', name: 'a' }, { t: 'team', team: 9 }]],
-    ['ping without t0', [{ t: 'join', name: 'a' }, { t: 'ping' }]],
-    ['buy __proto__', [{ t: 'join', name: 'a' }, { t: 'buy', item: '__proto__' }, { t: 'buy', item: 'constructor' }]],
-    ['non-object JSON', ['null', '5', '[]', '"s"', 'not json']],
+    { label: 'join without name', frames: [{ t: 'join' }] },
+    { label: 'join with object name', frames: [{ t: 'join', name: {} }] },
+    { label: 'chat text is a number', frames: [{ t: 'join', name: 'a' }, { t: 'chat', text: 5 }] },
+    { label: 'input with bad types', frames: [{ t: 'join', name: 'a' }, { t: 'i', s: 'x', b: [], a: null, w: 'x', k: {} }] },
+    { label: 'input with fractional slot', frames: [{ t: 'join', name: 'a' }, { t: 'i', s: 1, b: 0, a: 0, w: 1.5 }] },
+    { label: 'buy with numeric item', frames: [{ t: 'join', name: 'a' }, { t: 'buy', item: 7 }] },
+    { label: 'bots with string count', frames: [{ t: 'join', name: 'a' }, { t: 'bots', perTeam: 'many' }] },
+    { label: 'team with bad value', frames: [{ t: 'join', name: 'a' }, { t: 'team', team: 9 }] },
+    { label: 'ping without t0', frames: [{ t: 'join', name: 'a' }, { t: 'ping' }] },
+    { label: 'buy __proto__', frames: [{ t: 'join', name: 'a' }, { t: 'buy', item: '__proto__' }, { t: 'buy', item: 'constructor' }] },
+    { label: 'non-object JSON', frames: ['null', '5', '[]', '"s"', 'not json'] },
   ];
-  for (const [label, frames] of cases) {
+  for (const { label, frames } of cases) {
     const ws = await openWs(code);
     for (const f of frames) ws.send(typeof f === 'string' ? f : JSON.stringify(f));
     await sleep(150);
@@ -123,4 +130,8 @@ async function main() {
   done(0);
 }
 
-main().catch((e) => fail(String(e)));
+try {
+  await main();
+} catch (e) {
+  fail(String(e));
+}

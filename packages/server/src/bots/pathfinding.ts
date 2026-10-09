@@ -39,7 +39,7 @@ interface HeapEntry {
 
 /** Binary min-heap on (f, seq). Stale entries are skipped by the caller (lazy deletion). */
 class OpenHeap {
-  private items: HeapEntry[] = [];
+  private readonly items: HeapEntry[] = [];
   private seq = 0;
 
   get size(): number {

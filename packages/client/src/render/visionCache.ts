@@ -8,7 +8,7 @@ export const VISION_MOVE_EPSILON = 1;
  * and whether it was recomputed, so callers can skip redrawing when it was not.
  */
 export class VisionCache {
-  private poly: Vec2[] = [];
+  private readonly poly: Vec2[] = [];
   private origin: Vec2 | null = null;
   private smokes: Occluder[] = [];
   private map: CompiledMap | null = null;

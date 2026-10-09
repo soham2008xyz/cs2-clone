@@ -83,7 +83,7 @@ import {
 } from '@cs2d/shared';
 import { BotController, type BotDifficulty } from './bots/bot.js';
 import { LagCompensator } from './lagcomp.js';
-import { VisibilityMemory } from './visibility.js';
+import { VisibilityMemory, type Sighting } from './visibility.js';
 
 const SNAPSHOT_EVERY = Math.round(TICK_RATE / SNAPSHOT_RATE);
 /** Inputs kept per player; sized to hold a full client catch-up burst (250 ms of frames). */
@@ -1329,13 +1329,8 @@ export class Room {
     return [target ? target.pos : p.pos];
   }
 
-  /** Send each client only what it could see: its team, plus enemies in sight (fog of war enforced server-side). */
-  private broadcastSnapshot(): void {
-    const snaps = this.snapPlayers();
-    const smokes = this.smokeOccluders; // one occluder list for every check this snapshot
-    const allItems = [...this.groundItems.entries()];
-    const allNades = [...this.activeNades.values()];
-    const zones: ZoneSnap[] = [
+  private zoneSnaps(): ZoneSnap[] {
+    return [
       ...[...this.smokes.values()].map(
         (s): ZoneSnap => [s.id, 'smoke', Math.round(s.pos.x), Math.round(s.pos.y), Math.round(this.smokeRadius(s)), Math.max(0, s.untilTick - this.tick)],
       ),
@@ -1343,6 +1338,61 @@ export class Room {
         (f): ZoneSnap => [f.id, 'fire', Math.round(f.pos.x), Math.round(f.pos.y), MOLOTOV_RADIUS, Math.max(0, f.untilTick - this.tick)],
       ),
     ];
+  }
+
+  /** The recipient's team and itself always; enemies only while seen (or in their grace window) and alive. */
+  private visiblePlayersFor(p: PlayerConn, snaps: Map<number, PlayerSnap>, seen: Map<number, Sighting<PlayerSnap>>): PlayerSnap[] {
+    const players: PlayerSnap[] = [];
+    for (const q of this.players.values()) {
+      if (q.team === p.team || q.id === p.id) {
+        players.push(snaps.get(q.id)!);
+        continue;
+      }
+      const sighting = seen.get(q.id);
+      if (sighting && (sighting.snap[5] & PFLAG.ALIVE) !== 0) players.push(sighting.snap);
+    }
+    return players;
+  }
+
+  private visibleItemsFor(vantages: Vec2[], allItems: ReadonlyArray<[number, { weaponId: string; pos: Vec2 }]>, smokes: Occluder[]): GroundItem[] {
+    const items: GroundItem[] = [];
+    for (const [id, it] of allItems) {
+      if (canSeeBody(vantages, it.pos, this.map, smokes)) items.push([id, it.weaponId, Math.round(it.pos.x), Math.round(it.pos.y)]);
+    }
+    return items;
+  }
+
+  private visibleNadesFor(p: PlayerConn, vantages: Vec2[], allNades: ActiveNade[], smokes: Occluder[]): NadeSnap[] {
+    const nades: NadeSnap[] = [];
+    for (const n of allNades) {
+      if (n.ownerTeam === p.team || canSeeBody(vantages, n.pos, this.map, smokes)) {
+        nades.push([n.id, n.kind, Math.round(n.pos.x), Math.round(n.pos.y)]);
+      }
+    }
+    return nades;
+  }
+
+  /** Events addressed to the recipient (or to everyone), minus shots and throws by enemies it cannot see. */
+  private eventsFor(p: PlayerConn, events: Array<{ ev: GameEvent; to?: number; src?: number }>, seen: Map<number, Sighting<PlayerSnap>>): GameEvent[] {
+    const ev: GameEvent[] = [];
+    for (const e of events) {
+      if (e.to !== undefined && e.to !== p.id) continue;
+      if (e.src !== undefined) {
+        const src = this.players.get(e.src);
+        if (src && src.team !== p.team && !seen.get(src.id)?.live) continue; // hidden enemy's shot or throw
+      }
+      ev.push(e.ev);
+    }
+    return ev;
+  }
+
+  /** Send each client only what it could see: its team, plus enemies in sight (fog of war enforced server-side). */
+  private broadcastSnapshot(): void {
+    const snaps = this.snapPlayers();
+    const smokes = this.smokeOccluders; // one occluder list for every check this snapshot
+    const allItems = [...this.groundItems.entries()];
+    const allNades = [...this.activeNades.values()];
+    const zones = this.zoneSnaps();
     const events = this.events;
     this.events = [];
     for (const p of this.players.values()) {
@@ -1353,35 +1403,11 @@ export class Room {
         .map((q) => ({ id: q.id, pos: q.pos, snap: snaps.get(q.id)! }));
       const seen = this.visibility.visible(p.id, vantages, enemies, this.map, smokes, this.tick);
 
-      const players: PlayerSnap[] = [];
-      for (const q of this.players.values()) {
-        if (q.team === p.team || q.id === p.id) {
-          players.push(snaps.get(q.id)!);
-          continue;
-        }
-        const sighting = seen.get(q.id);
-        if (sighting && (sighting.snap[5] & PFLAG.ALIVE) !== 0) players.push(sighting.snap);
-      }
-      const items: GroundItem[] = [];
-      for (const [id, it] of allItems) {
-        if (canSeeBody(vantages, it.pos, this.map, smokes)) items.push([id, it.weaponId, Math.round(it.pos.x), Math.round(it.pos.y)]);
-      }
-      const nades: NadeSnap[] = [];
-      for (const n of allNades) {
-        if (n.ownerTeam === p.team || canSeeBody(vantages, n.pos, this.map, smokes)) {
-          nades.push([n.id, n.kind, Math.round(n.pos.x), Math.round(n.pos.y)]);
-        }
-      }
+      const players = this.visiblePlayersFor(p, snaps, seen);
+      const items = this.visibleItemsFor(vantages, allItems, smokes);
+      const nades = this.visibleNadesFor(p, vantages, allNades, smokes);
       const bombVisible = this.bomb.mode !== 'dropped' || p.team === 'T' || canSeeBody(vantages, this.bomb.pos, this.map, smokes);
-      const ev: GameEvent[] = [];
-      for (const e of events) {
-        if (e.to !== undefined && e.to !== p.id) continue;
-        if (e.src !== undefined) {
-          const src = this.players.get(e.src);
-          if (src && src.team !== p.team && !seen.get(src.id)?.live) continue; // hidden enemy's shot or throw
-        }
-        ev.push(e.ev);
-      }
+      const ev = this.eventsFor(p, events, seen);
       p.ws.send(
         encode({
           t: 's',
