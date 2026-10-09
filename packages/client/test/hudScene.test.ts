@@ -189,3 +189,197 @@ describe('HudScene buy panel', () => {
     expect(texts(hud.buyPanel).some((t) => t.startsWith('Defuse Kit'))).toBe(false);
   });
 });
+
+// ── interaction, overlays and panels ─────────────────────────────────────────
+
+interface HudMore extends Omit<HudInternals, 'tweens'> {
+  scorePanel: FakeObject;
+  matchEndPanel: FakeObject;
+  bannerText: FakeObject;
+  spectateText: FakeObject;
+  pingText: FakeObject;
+  hurtOverlay: FakeObject;
+  crosshair: FakeObject;
+  hitmarker: FakeObject;
+  tweens: { add: ReturnType<typeof vi.fn> };
+  update(): void;
+}
+
+let more: HudMore;
+let made: FakeObject[];
+
+function key(emitter: FakeEmitter, name: string, ev: Partial<KeyboardEvent> = {}): void {
+  emitter.emit(name, { preventDefault: vi.fn(), ...ev });
+}
+
+describe('HudScene interaction', () => {
+  beforeEach(() => {
+    const factory = fakeFactory();
+    made = factory.created;
+    more = new HudScene() as unknown as HudMore;
+    more.add = factory.add;
+    more.scale = { width: 800, height: 600, on: () => {} };
+    more.input = { keyboard: new FakeEmitter(), activePointer: { x: 100, y: 120 } } as never;
+    more.game = { events: new FakeEmitter() };
+    more.events = new FakeEmitter();
+    more.time = { now: 1000 };
+    more.tweens = { add: vi.fn() };
+    more.create();
+  });
+
+  it('B toggles the buy menu and tells the game scene', () => {
+    key(more.input.keyboard, 'keydown-B');
+    expect(more.buyOpen).toBe(true);
+    expect(more.game.events.payloads('buy:toggle')).toEqual([[true]]);
+    key(more.input.keyboard, 'keydown-B');
+    expect(more.buyOpen).toBe(false);
+  });
+
+  it('ignores B while the chat box has focus', () => {
+    more.game.events.emit('chat:toggle', true);
+    key(more.input.keyboard, 'keydown-B');
+    expect(more.buyOpen).toBe(false);
+    more.game.events.emit('chat:toggle', false);
+    key(more.input.keyboard, 'keydown-B');
+    expect(more.buyOpen).toBe(true);
+  });
+
+  it('buy rows highlight on hover and emit a purchase on click', () => {
+    const row = made.find((o) => o.factory === 'text' && String(o.text).startsWith('AK-47'))!;
+    expect(row).toBeDefined();
+    const handler = (evt: string) => row.calls.find((c) => c.method === 'on' && c.args[0] === evt)!.args[1] as () => void;
+    handler('pointerover')();
+    expect(row.color).toBe('#ffe680');
+    handler('pointerout')();
+    expect(row.color).toBe('#dddddd');
+    handler('pointerdown')();
+    expect(more.game.events.payloads('buy')).toEqual([['ak47']]);
+  });
+
+  it('TAB shows the scoreboard (always preventing browser focus change) and releasing hides it', () => {
+    const ev = { preventDefault: vi.fn() };
+    more.game.events.emit('hud:roster', [
+      { id: 1, name: 'Me', team: 'T', k: 3, d: 1 },
+      { id: 2, name: 'Foe', team: 'CT', k: 0, d: 3 },
+    ]);
+    more.input.keyboard.emit('keydown-TAB', ev);
+    expect(ev.preventDefault).toHaveBeenCalled();
+    expect(methodsCalled(more.scorePanel)).toContain('setVisible');
+    expect(more.scorePanel.visible).toBe(true);
+    const rows = more.scorePanel.calls.filter((c) => c.method === 'add').map((c) => (c.args[0] as FakeObject).text);
+    expect(rows).toEqual(expect.arrayContaining(['COUNTER-TERRORISTS', 'TERRORISTS', 'Me', '3 / 1', 'Foe', '0 / 3']));
+    key(more.input.keyboard, 'keyup-TAB');
+    expect(more.scorePanel.visible).toBe(false);
+  });
+
+  it('TAB does nothing visible while typing in chat, but still prevents default', () => {
+    const ev = { preventDefault: vi.fn() };
+    more.game.events.emit('chat:toggle', true);
+    more.input.keyboard.emit('keydown-TAB', ev);
+    expect(ev.preventDefault).toHaveBeenCalled();
+    expect(more.scorePanel.visible).not.toBe(true);
+  });
+
+  it('refreshes an open scoreboard when the roster changes, and leaves a closed one alone', () => {
+    more.game.events.emit('hud:roster', [{ id: 1, name: 'Early', team: 'T', k: 0, d: 0 }]);
+    const closedAdds = more.scorePanel.calls.filter((c) => c.method === 'add').length;
+    expect(closedAdds).toBe(0);
+
+    key(more.input.keyboard, 'keydown-TAB');
+    more.game.events.emit('hud:roster', [{ id: 2, name: 'Late', team: 'CT', k: 1, d: 0 }]);
+    const names = more.scorePanel.calls.filter((c) => c.method === 'add').map((c) => (c.args[0] as FakeObject).text);
+    expect(names).toContain('Late');
+  });
+
+  it('shows who is being spectated and clears the label when back on self', () => {
+    more.game.events.emit('hud:spectate', 'Mate');
+    expect(more.spectateText.text).toBe('SPECTATING Mate  (SPACE to cycle)');
+    more.game.events.emit('hud:spectate', null);
+    expect(more.spectateText.text).toBe('');
+  });
+
+  it('shows a ping readout', () => {
+    more.game.events.emit('hud:ping', 42);
+    expect(more.pingText.text).toBe('42ms');
+  });
+
+  it('banners appear in their colour and expire after the ttl', () => {
+    more.game.events.emit('hud:banner', { text: 'ROUND 2', color: '#ffffff', ttl: 2000 });
+    expect(more.bannerText.text).toBe('ROUND 2');
+    expect(more.bannerText.visible).toBe(true);
+    more.time.now = 2500;
+    more.update();
+    expect(more.bannerText.visible).toBe(true);
+    more.time.now = 3001;
+    more.update();
+    expect(more.bannerText.visible).toBe(false);
+  });
+
+  it('flashes red and fades out when hurt', () => {
+    more.game.events.emit('hud:hurt', 20);
+    expect(more.hurtOverlay.calls.find((c) => c.method === 'setFillStyle' && c.args[1] === 0.28)).toBeDefined();
+    expect(more.tweens.add).toHaveBeenCalledWith(expect.objectContaining({ targets: more.hurtOverlay, fillAlpha: 0 }));
+  });
+
+  it('draws a hit marker for a short window only', () => {
+    more.game.events.emit('hud:hitmarker');
+    more.update();
+    expect(methodsCalled(more.hitmarker).filter((m) => m === 'lineBetween')).toHaveLength(4);
+    more.hitmarker.calls.length = 0;
+    more.time.now = 1200;
+    more.update();
+    expect(methodsCalled(more.hitmarker)).not.toContain('lineBetween');
+  });
+
+  it('hides the crosshair while the buy menu is open', () => {
+    more.update();
+    expect(methodsCalled(more.crosshair).filter((m) => m === 'lineBetween')).toHaveLength(4);
+    key(more.input.keyboard, 'keydown-B');
+    more.crosshair.calls.length = 0;
+    more.update();
+    expect(methodsCalled(more.crosshair)).not.toContain('lineBetween');
+  });
+
+  it('expires killfeed lines and stacks the rest', () => {
+    more.game.events.emit('hud:kill', { killer: 'A', victim: 'B', weapon: 'AK-47', meKiller: false, meVictim: false });
+    more.time.now = 4000;
+    more.game.events.emit('hud:kill', { killer: 'C', victim: 'D', weapon: 'AWP', meKiller: false, meVictim: false });
+    const [first, second] = more.killfeed.map((k) => k.text);
+
+    more.time.now = 7500; // first (until 7000) expired, second (until 10000) alive
+    more.update();
+    expect(first.destroyed).toBe(true);
+    expect(more.killfeed).toHaveLength(1);
+    expect(second.x).toBe(800 - 16);
+    expect(second.y).toBe(16);
+  });
+
+  it('lists the match result sorted by kills, marking bots', () => {
+    more.game.events.emit('hud:matchend', {
+      winner: 'CT',
+      roster: [
+        { id: 1, name: 'Low', team: 'T', k: 1, d: 5 },
+        { id: 2, name: 'Top', team: 'CT', k: 9, d: 0, bot: 1 },
+      ],
+    });
+    const texts = more.matchEndPanel.calls.filter((c) => c.method === 'add').map((c) => (c.args[0] as FakeObject).text).filter((t) => typeof t === 'string');
+    expect(texts).toContain('COUNTER-TERRORISTS WIN');
+    expect(texts.indexOf('Top (bot)')).toBeLessThan(texts.indexOf('Low'));
+    expect(texts).toContain('9 / 0');
+    expect(more.matchEndPanel.visible).toBe(true);
+  });
+
+  it('titles a Terrorist victory', () => {
+    more.game.events.emit('hud:matchend', { winner: 'T', roster: [] });
+    const texts = more.matchEndPanel.calls.filter((c) => c.method === 'add').map((c) => (c.args[0] as FakeObject).text);
+    expect(texts).toContain('TERRORISTS WIN');
+  });
+
+  it('detaches every game-event listener on shutdown', () => {
+    more.events.emit('shutdown');
+    more.game.events.emit('hud:ping', 99);
+    more.game.events.emit('hud:spectate', 'X');
+    expect(more.pingText.text).toBe(''); // still the initial empty label: handlers were removed
+    expect(more.spectateText.text).toBe('');
+  });
+});

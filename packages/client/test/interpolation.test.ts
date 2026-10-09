@@ -90,3 +90,23 @@ describe('SnapshotBuffer.latestFor', () => {
     expect(buf.latestFor(2)).toBeUndefined();
   });
 });
+
+describe('SnapshotBuffer.sample: entities that appear mid-interpolation', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('shows an id the newer snapshot adds immediately, without interpolating from nothing', () => {
+    const buf = new SnapshotBuffer();
+    const now = vi.spyOn(performance, 'now');
+    now.mockReturnValue(1000);
+    buf.push(snap(1, 1, 0, 0));
+    now.mockReturnValue(1100);
+    buf.push({ ...snap(2, 1, 100, 0), p: [...snap(2, 1, 100, 0).p, [2, 500, 600, 0, 100, 1, 'knife']] });
+
+    now.mockReturnValue(1150); // halfway
+    const sampled = buf.sample();
+    expect(sampled.get(1)!.x).toBeCloseTo(50, 5);
+    expect(sampled.get(2)).toMatchObject({ x: 500, y: 600 });
+  });
+});
