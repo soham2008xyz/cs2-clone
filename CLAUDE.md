@@ -55,7 +55,7 @@ The core idea: **`packages/shared` is a deterministic, dependency-free simulatio
 
 ### Server (`packages/server`)
 
-- `index.ts` is plain `node:http` plus `ws`. It serves `GET /rooms` (the Render health check) and `POST /rooms`, upgrades websockets with `?room=CODE`, and serves the built client for any other GET with an SPA fallback.
+- `app.ts` (`startServer`, started by the thin `index.ts`) is plain `node:http` plus `ws`. It serves `GET /rooms` (the Render health check) and `POST /rooms`, upgrades websockets with `?room=CODE`, and serves the built client for any other GET with an SPA fallback.
 - `RoomManager` creates and reaps `Room`s, which have 4-letter codes. `Room` (about 1300 lines) owns everything per match: phases (`waiting → freeze → live → planted → round_end → match_end`), economy, buy rules, bomb, grenades and zones, drops and pickups, and snapshots.
 - Bots (`bots/`) are `PlayerConn`s with `ws: null`. `bot.think()` produces the same `InputMsg`s a client sends, and they go through `Room.handleInput`. Never give bots a side door into state. `pathfinding.ts` works on the compiled map grid.
 - `lagcomp.ts` keeps one second of positions. On a shot, `Room` rewinds targets to `clientSeenTick − INTERP_DELAY_TICKS`, so hits match what the shooter saw.

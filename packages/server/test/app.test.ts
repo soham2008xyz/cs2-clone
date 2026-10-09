@@ -131,7 +131,7 @@ describe('static client', () => {
     expect(await (await fetch(`${base()}/assets`)).text()).toBe('<h1>home</h1>'); // a directory is not a file
   });
 
-  it('does not serve files outside the dist directory', async () => {
+  it('answers a ../ request line with the SPA index rather than a file outside dist', async () => {
     writeFileSync(join(clientDist, 'index.html'), '<h1>home</h1>');
     writeFileSync(join(clientDist, '..', 'cs2d-secret.txt'), 'secret');
     try {

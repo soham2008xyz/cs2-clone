@@ -67,7 +67,7 @@ describe('renderMap', () => {
     const map = getMap('dust2');
     const { texts } = render(map);
     const letters = texts.filter((t) => label(t) === 'A' || label(t) === 'B');
-    expect(letters.map((t) => label(t)).sort()).toEqual(['A', 'B']);
+    expect(letters.map((t) => String(label(t))).sort((a, b) => a.localeCompare(b))).toEqual(['A', 'B']);
     const callouts = texts.filter((t) => !['A', 'B'].includes(label(t) as string));
     expect(callouts).toHaveLength(map.def.callouts.length);
     expect(label(callouts[0])).toBe(map.def.callouts[0].name.toUpperCase());
