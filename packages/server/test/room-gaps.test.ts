@@ -210,3 +210,46 @@ describe('defusing speed', () => {
     expect(defuseTicks(true)).toBeLessThan(defuseTicks(false));
   });
 });
+
+describe('action progress in snapshots', () => {
+  const progressSeen = (msgs: Array<Record<string, unknown>>): number[] =>
+    msgs
+      .filter((m): m is Record<string, unknown> & SnapshotMsg => m.t === 's')
+      .map((m) => m.m?.prog)
+      .filter((p): p is number => typeof p === 'number');
+
+  it('reports plant progress to the planter, rising toward 1', () => {
+    const { room, t, rec, send } = liveDuel();
+    t.pos = { ...room.map.siteCenters.A! };
+    for (let i = 0; i < 4; i++) {
+      send(t.id, BTN.USE);
+      step(room, 1);
+    }
+    const seen = progressSeen(rec.msgs);
+    expect(seen.length).toBeGreaterThan(0);
+    expect(Math.max(...seen)).toBeGreaterThan(0);
+    expect(Math.max(...seen)).toBeLessThanOrEqual(1);
+  });
+
+  it('a defuse kit makes the same number of ticks fill more of the bar', () => {
+    const progressAfter = (withKit: boolean): number => {
+      const room = new Room('testarena', FAST);
+      const t = room.addPlayer(null, 'T1', 'T');
+      const rec = fakeWs();
+      const ct = room.addPlayer(rec.ws, 'CT1', 'CT');
+      const send = feeder(room);
+      stepUntil(room, () => room.phase === 'live');
+      t.pos = { ...room.map.siteCenters.A! };
+      stepUntil(room, () => { send(t.id, BTN.USE); return room.phase === 'planted'; }, 200);
+      ct.hasKit = withKit;
+      ct.pos = { ...room.bombInfo.pos };
+      rec.msgs.length = 0;
+      for (let i = 0; i < 3; i++) {
+        send(ct.id, BTN.USE);
+        step(room, 1);
+      }
+      return Math.max(0, ...progressSeen(rec.msgs));
+    };
+    expect(progressAfter(true)).toBeGreaterThan(progressAfter(false));
+  });
+});
