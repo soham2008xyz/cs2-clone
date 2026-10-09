@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { CH, getMap, TILE_SIZE, type CompiledMap } from '@cs2d/shared';
-import { fakeFactory, fakeObject } from './phaserFakes.js';
+import { fakeFactory, fakeObject, type FakeObject } from './phaserFakes.js';
 
 vi.mock('phaser', () => ({ default: { Scene: class {} } }));
 
@@ -35,6 +35,8 @@ function render(map: CompiledMap) {
   return { tilemap, tileset, tilemapConfig: tilemapConfig!, texts: created.filter((c) => c.factory === 'text') };
 }
 
+const label = (t: FakeObject): unknown => (t.args as unknown[])[2];
+
 describe('renderMap', () => {
   it('builds a tile grid matching the compiled map and registers the tileset', () => {
     const map = getMap('testarena');
@@ -64,18 +66,18 @@ describe('renderMap', () => {
   it('adds a letter per bombsite and a faint label per callout', () => {
     const map = getMap('dust2');
     const { texts } = render(map);
-    const letters = texts.filter((t) => t.args[2] === 'A' || t.args[2] === 'B');
-    expect(letters.map((t) => t.args[2]).sort()).toEqual(['A', 'B']);
-    const callouts = texts.filter((t) => !['A', 'B'].includes(t.args[2] as string));
+    const letters = texts.filter((t) => label(t) === 'A' || label(t) === 'B');
+    expect(letters.map((t) => label(t)).sort()).toEqual(['A', 'B']);
+    const callouts = texts.filter((t) => !['A', 'B'].includes(label(t) as string));
     expect(callouts).toHaveLength(map.def.callouts.length);
-    expect(callouts[0].args[2]).toBe(map.def.callouts[0].name.toUpperCase());
+    expect(label(callouts[0])).toBe(map.def.callouts[0].name.toUpperCase());
   });
 
   it('skips a bombsite the map does not have', () => {
     const map = getMap('dust2');
     const noB = { ...map, siteCenters: { A: map.siteCenters.A, B: undefined } } as unknown as CompiledMap;
     const { texts } = render(noB);
-    expect(texts.some((t) => t.args[2] === 'B')).toBe(false);
-    expect(texts.some((t) => t.args[2] === 'A')).toBe(true);
+    expect(texts.some((t) => label(t) === 'B')).toBe(false);
+    expect(texts.some((t) => label(t) === 'A')).toBe(true);
   });
 });

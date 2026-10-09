@@ -445,3 +445,120 @@ describe('GameScene — connection loss', () => {
     expect(ended).toHaveBeenCalledWith('room not found');
   });
 });
+
+describe('GameScene.handleEvent — match flow and effects', () => {
+  const banners = () => g.game.events.payloads('hud:banner').map(([b]) => b as { text: string; color: string; ttl: number });
+
+  it('forwards hit and hurt feedback to the HUD with sound', () => {
+    g.handleEvent({ e: 'hit', id: 1, target: 3, d: 27 });
+    g.handleEvent({ e: 'hurt', d: 12, from: 3 });
+    expect(g.game.events.payloads('hud:hitmarker')).toHaveLength(1);
+    expect(g.game.events.payloads('hud:hurt')).toEqual([[12]]);
+    expect(sfx).toHaveBeenCalledWith('hit');
+    expect(sfx).toHaveBeenCalledWith('hurt');
+  });
+
+  it('announces a planted bomb and resets the beep clock', () => {
+    g.nextBeepAt = 999;
+    g.handleEvent({ e: 'planted', x: 10, y: 20 });
+    expect(banners()[0].text).toBe('THE BOMB HAS BEEN PLANTED');
+    expect(sfx).toHaveBeenCalledWith('plant', { x: 10, y: 20 }, g.listener);
+    expect(g.nextBeepAt).toBe(0);
+  });
+
+  it('announces a defuse map-wide', () => {
+    g.handleEvent({ e: 'defused' });
+    expect(banners()[0].text).toBe('BOMB DEFUSED');
+    expect(sfx).toHaveBeenCalledWith('defused');
+  });
+
+  it('shakes the screen and flashes on a C4 detonation', () => {
+    textures.add('glow');
+    g.handleEvent({ e: 'exploded', x: 50, y: 60 });
+    expect(methodsCalled(g.cameras.main)).toContain('shake');
+    expect(created.some((o) => o.factory === 'circle')).toBe(true);
+    expect(created.some((o) => o.factory === 'image' && (o.args as unknown[])[2] === 'glow')).toBe(true);
+    expect(banners()[0].text).toBe('THE BOMB HAS EXPLODED');
+    expect(sfx).toHaveBeenCalledWith('c4_explosion');
+    // the tween callbacks clean up the effect objects
+    for (const [cfg] of g.tweens.add.mock.calls as Array<[{ onComplete: () => void }]>) cfg.onComplete();
+    expect(created.filter((o) => o.factory === 'circle' || o.factory === 'image').every((o) => o.destroyed)).toBe(true);
+  });
+
+  it('skips the glow when the texture is missing', () => {
+    g.handleEvent({ e: 'exploded', x: 50, y: 60 });
+    expect(created.some((o) => o.factory === 'image')).toBe(false);
+  });
+
+  it('numbers the round at the start', () => {
+    g.handleEvent({ e: 'round_start', rn: 7 });
+    expect(banners()[0]).toMatchObject({ text: 'ROUND 7', ttl: 2000 });
+    expect(sfx).toHaveBeenCalledWith('round_start');
+  });
+
+  it.each([
+    ['T', 'TERRORISTS WIN', 'round_win'],
+    ['CT', 'COUNTER-TERRORISTS WIN', 'round_lose'],
+  ] as const)('round won by %s shows "%s" and plays %s for a T player', (winner, text, cue) => {
+    g.handleEvent({ e: 'round_end', winner, reason: 'elimination' });
+    expect(banners()[0].text).toBe(text);
+    expect(sfx).toHaveBeenCalledWith(cue);
+  });
+
+  it('announces the side swap', () => {
+    g.handleEvent({ e: 'swap' });
+    expect(banners()[0].text).toBe('SWITCHING SIDES');
+  });
+
+  it.each([
+    ['T', 'TERRORISTS WIN THE MATCH'],
+    ['CT', 'COUNTER-TERRORISTS WIN THE MATCH'],
+  ] as const)('match won by %s is announced and the scoreboard gets the roster', (winner, text) => {
+    g.handleEvent({ e: 'match_end', winner });
+    expect(banners()[0].text).toBe(text);
+    const [[payload]] = g.game.events.payloads('hud:matchend') as Array<[{ winner: TeamId; roster: RosterEntry[] }]>;
+    expect(payload.winner).toBe(winner);
+    expect(payload.roster).toHaveLength(3);
+  });
+
+  it('flashes at a flashbang pop and removes the flash afterwards', () => {
+    g.handleEvent({ e: 'flash_pop', x: 5, y: 6 });
+    const pop = created.find((o) => o.factory === 'circle')!;
+    expect(sfx).toHaveBeenCalledWith('flash_pop', { x: 5, y: 6 }, g.listener);
+    (g.tweens.add.mock.calls[0][0] as { onComplete: () => void }).onComplete();
+    expect(pop.destroyed).toBe(true);
+  });
+
+  it('plays positional audio for smoke and molotov (the visuals come from zone snapshots)', () => {
+    g.handleEvent({ e: 'smoke_pop', x: 1, y: 2 });
+    g.handleEvent({ e: 'molotov_ignite', x: 3, y: 4 });
+    expect(sfx).toHaveBeenCalledWith('smoke_pop', { x: 1, y: 2 }, g.listener);
+    expect(sfx).toHaveBeenCalledWith('molly_ignite', { x: 3, y: 4 }, g.listener);
+    expect(created).toHaveLength(0);
+  });
+
+  it('ignores events it has no presentation for', () => {
+    g.handleEvent({ e: 'nade_throw', kind: 'he', x: 0, y: 0 });
+    expect(created).toHaveLength(0);
+    expect(sfx).not.toHaveBeenCalled();
+  });
+
+  it('adds a glow burst on a nearby HE pop when the texture exists', () => {
+    textures.add('glow');
+    g.handleEvent({ e: 'he_pop', x: 0, y: 0 });
+    expect(created.some((o) => o.factory === 'image' && (o.args as unknown[])[2] === 'glow')).toBe(true);
+  });
+
+  it('credits the kill sound only to the killer', () => {
+    g.handleEvent({ e: 'kill', k: 2, v: 3, w: 'ak47' });
+    expect(sfx).not.toHaveBeenCalledWith('kill');
+  });
+
+  it('labels kills by grenade and unknown weapons', () => {
+    g.handleEvent({ e: 'kill', k: 2, v: 3, w: 'he' });
+    g.handleEvent({ e: 'kill', k: 2, v: 99, w: 'mystery' });
+    const [first, second] = g.game.events.payloads('hud:kill').map(([k]) => k as { weapon: string; victim: string });
+    expect(first.weapon).toBeTruthy();
+    expect(second).toMatchObject({ weapon: 'mystery', victim: '#99' });
+  });
+});
