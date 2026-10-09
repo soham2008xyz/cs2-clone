@@ -112,3 +112,83 @@ describe('menu capacity handling', () => {
     expect(document.getElementById('menu-error')!.textContent).toContain('is the server running');
   });
 });
+
+describe('menu entry points', () => {
+  const flush = () => vi.advanceTimersByTimeAsync(0);
+  const input = (id: string) => document.getElementById(id) as HTMLInputElement;
+
+  it('quick play creates a dust2 room with backfill bots and enters it with the chosen difficulty', async () => {
+    createRoom.mockResolvedValue({ code: 'QUIK', map: 'dust2' });
+    const onStart = vi.fn();
+    initMenu(onStart);
+    input('menu-name').value = 'Ann';
+    input('menu-difficulty').value = 'hard';
+    document.getElementById('menu-quickplay')!.click();
+    await flush();
+    expect(createRoom).toHaveBeenCalledWith('dust2', true, 'hard');
+    expect(onStart).toHaveBeenCalledTimes(1);
+    const { session } = await import('../src/session.js');
+    expect(session).toMatchObject({ name: 'Ann', roomCode: 'QUIK', map: 'dust2', botsRequested: { perTeam: 5, difficulty: 'hard' } });
+  });
+
+  it('quick play falls back to a generic message for non-capacity failures', async () => {
+    createRoom.mockRejectedValue(new Error('boom'));
+    initMenu(() => {});
+    document.getElementById('menu-quickplay')!.click();
+    await flush();
+    expect(document.getElementById('menu-error')!.textContent).toBe('could not create a match — is the server running?');
+  });
+
+  it('create passes the chosen map, backfill flag and difficulty', async () => {
+    createRoom.mockResolvedValue({ code: 'ROOM', map: 'testarena' });
+    const onStart = vi.fn();
+    initMenu(onStart);
+    const backfill = document.getElementById('menu-backfill') as HTMLInputElement;
+    backfill.type = 'checkbox';
+    backfill.checked = true;
+    input('menu-map').value = 'testarena';
+    document.getElementById('menu-create')!.click();
+    await flush();
+    expect(createRoom).toHaveBeenCalledWith('testarena', true, '');
+    expect(onStart).toHaveBeenCalled();
+  });
+
+  it('refuses to join without a room code', () => {
+    const onStart = vi.fn();
+    initMenu(onStart);
+    input('menu-join-code').value = '   ';
+    document.getElementById('menu-join')!.click();
+    expect(document.getElementById('menu-error')!.textContent).toBe('enter a room code');
+    expect(onStart).not.toHaveBeenCalled();
+  });
+
+  it('pressing Enter in the code box joins, normalising the code and using the listed map', async () => {
+    listRooms.mockResolvedValue({ rooms: [{ code: 'ABCD', map: 'testarena', players: 1, phase: 'waiting', full: false }] });
+    const onStart = vi.fn();
+    initMenu(onStart);
+    await flush();
+    const code = input('menu-join-code');
+    code.value = 'abcd';
+    code.dispatchEvent(new KeyboardEvent('keydown', { key: 'a' }));
+    expect(onStart).not.toHaveBeenCalled();
+    code.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    expect(onStart).toHaveBeenCalledTimes(1);
+    const { session } = await import('../src/session.js');
+    expect(session).toMatchObject({ roomCode: 'ABCD', map: 'testarena' });
+  });
+
+  it('names an anonymous player', () => {
+    initMenu(() => {});
+    input('menu-name').value = '   ';
+    input('menu-join-code').value = 'WXYZ';
+    document.getElementById('menu-join')!.click();
+    return import('../src/session.js').then(({ session }) => expect(session.name).toMatch(/^Player\d{1,3}$/));
+  });
+
+  it('reports an unreachable server in the room list', async () => {
+    listRooms.mockRejectedValue(new Error('down'));
+    initMenu(() => {});
+    await flush();
+    expect(document.getElementById('menu-error')!.textContent).toMatch(/cannot reach server/);
+  });
+});

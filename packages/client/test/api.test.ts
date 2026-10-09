@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { CreateRoomError, createRoom } from '../src/net/api.js';
+import { CreateRoomError, createRoom, listRooms } from '../src/net/api.js';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -21,5 +21,18 @@ describe('createRoom', () => {
     const err = await createRoom('dust2', false).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(CreateRoomError);
     expect((err as CreateRoomError).status).toBe(status);
+  });
+});
+
+describe('listRooms', () => {
+  it('returns the maps and rooms from the server', async () => {
+    stub(200, { maps: ['dust2'], rooms: [] });
+    await expect(listRooms()).resolves.toEqual({ maps: ['dust2'], rooms: [] });
+    expect(fetch).toHaveBeenCalledWith('http://h/rooms');
+  });
+
+  it('throws with the status on a non-2xx response', async () => {
+    stub(500);
+    await expect(listRooms()).rejects.toThrow('list rooms failed: 500');
   });
 });
