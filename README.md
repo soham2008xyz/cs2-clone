@@ -1,5 +1,13 @@
 # CS2D
 
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)
+![Phaser](https://img.shields.io/badge/Phaser-000000?logo=phaser&logoColor=white)
+![Vite](https://img.shields.io/badge/Vite-646CFF?logo=vite&logoColor=white)
+![Node.js](https://img.shields.io/badge/Node.js-339933?logo=nodedotjs&logoColor=white)
+![ws](https://img.shields.io/badge/ws-100000?logo=socketdotio&logoColor=white)
+![Vitest](https://img.shields.io/badge/Vitest-729B1B?logo=vitest&logoColor=white)
+![Render](https://img.shields.io/badge/Render-46E3B7?logo=render&logoColor=white)
+
 A 2D top-down Counter-Strike clone (GTA-1/2 style camera) with MR12 rounds,
 economy, utility, bots, and online multiplayer. Built with Phaser 3 + Vite
 (client), Node.js + ws (server), and a shared pure-TypeScript simulation
