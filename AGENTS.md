@@ -27,6 +27,11 @@
 - Single-server prod: server must be able to serve files from `packages/client/dist/` (built client). In dev, run server and Vite client separately.
 - Coverage reports consumed by Sonar: `packages/*/coverage/lcov.info`. Sonar excludes `**/test/**`, `scripts/**`, `**/vite.config.ts`, `**/vitest.config.ts`.
 
+## Cursor Cloud specific instructions
+- Cloud Agent `install` / `start` live in `.cursor/` (`install.sh` installs Node 24 into `/usr/local/bin` and runs `npm ci --ignore-scripts`; `start.sh` launches `dev:server` and Vite on `:8090` / `:5173` in tmux). Ensure `PATH` prefers `/usr/local/bin` so Node 24 wins over the image default.
+- Manual GUI testing: open `http://localhost:5173`, enter a name, use **Quick Match vs Bots** or **Create Room**. Server health: `GET http://localhost:8090/rooms`.
+- Integration tests need a free port; they spawn their own server. Do not rely on the boot `start` servers for `npm run test:integration` unless you stop them first or expect port conflicts on `:8090`.
+
 ## Development gotchas
 - Prefer executable sources of truth (package.json scripts, CI, render.yaml) over prose when they conflict. `README.md` is the run reference.
 - Vitest across all packages (`@vitest/coverage-v8`). Client uses `jsdom`. Shared is framework-free.
