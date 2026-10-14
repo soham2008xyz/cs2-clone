@@ -15,7 +15,7 @@ else
 fi
 
 if [[ "$need_node" -eq 1 ]]; then
-  curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
+  curl --proto '=https' --tlsv1.2 -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
     | sudo tar -xJ -C /usr/local --strip-components=1 --no-same-owner
 fi
 
