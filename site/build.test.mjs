@@ -144,7 +144,11 @@ test('build honours CS2D_GA_MEASUREMENT_ID, including "off"', () => {
 /** Runs the inline GA snippet against fake browser globals; reports whether GA loaded. */
 function runAnalyticsSnippet(nav, win = {}) {
   const snippet = renderAnalytics('G-TEST1234', 'https://play.example.com/');
-  const code = snippet.replace(/^\s*<script>/, '').replace(/<\/script>\s*$/, '');
+  const open = '<script>';
+  const start = snippet.indexOf(open);
+  const end = snippet.lastIndexOf('</script>');
+  assert.ok(start !== -1 && end > start, 'snippet is wrapped in one inline <script> element');
+  const code = snippet.slice(start + open.length, end);
   const appended = [];
   const listeners = [];
   const document = {
