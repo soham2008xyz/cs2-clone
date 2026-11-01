@@ -19,6 +19,8 @@ npm test                  # vitest in shared, server, client (in that order)
 npm run test:coverage     # same, with lcov for Sonar
 npm run test:integration  # scripts/integration-round.mjs + integration-bots.mjs (spawn a real server)
 npm run typecheck             # tsc --noEmit over src + test in all three packages
+npm run build:site            # static landing page (site/) → site/dist
+npm run test:site             # node:test for the landing page build
 ```
 
 Run one package, file or test:
@@ -35,6 +37,7 @@ There is no linter or formatter script. Only `.editorconfig` applies.
 Other scripts:
 - `scripts/headless-client.mjs [name] [sec] [roomCode]` joins a room as a scripted player. It helps test netcode with a second player.
 - `scripts/fetch-assets.mjs` downloads the optional Kenney sprites into `packages/client/public/assets/`. The game falls back to procedural textures without them.
+- `site/` is the static landing page, deployed to GitHub Pages by `.github/workflows/pages.yml`. It is not part of the game client and has no npm dependencies.
 - `CS2D_FAST=1` makes the server use short round timings. The integration scripts rely on it.
 
 ## Architecture

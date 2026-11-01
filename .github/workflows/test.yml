@@ -51,6 +51,9 @@ jobs:
       - name: Build client
         run: npm run build -w @cs2d/client
 
+      - name: Test and build landing page
+        run: npm run test:site && npm run build:site
+
       # Scanner plugins and analyzers; skipped with the scan when there is no token
       - name: Cache SonarCloud packages
         if: matrix.node-version == 24 && env.SONAR_TOKEN != ''

@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CS2D: top-down Counter-Strike in your browser</title>
+    <meta
+      name="description"
+      content="CS2D is a free 2D top-down Counter-Strike clone you play in the browser: MR12 rounds, economy, grenades, bots and online rooms with shareable codes."
+    />
+    <meta name="theme-color" content="#14120c" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="CS2D: top-down Counter-Strike in your browser" />
+    <meta
+      property="og:description"
+      content="MR12 rounds, economy, grenades, bots and online multiplayer. No install, just open a link."
+    />
+    <meta property="og:image" content="img/spawn.jpg" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%2314120c'/%3E%3Ccircle cx='16' cy='16' r='9' fill='none' stroke='%23d9a33c' stroke-width='2.5'/%3E%3Cpath d='M16 3v8M16 21v8M3 16h8M21 16h8' stroke='%23d9a33c' stroke-width='2.5'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="#top">CS2D</a>
+      <nav aria-label="Sections">
+        <a href="#features">Features</a>
+        <a href="#screens">Screens</a>
+        <a href="#how">How to play</a>
+        <a href="{{REPO_URL}}">GitHub</a>
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero">
+        <div class="hero-text">
+          <p class="eyebrow">Free · open source · no install</p>
+          <h1>A 2D top-down Counter-Strike clone you play in the browser.</h1>
+          <p class="lede">
+            Five-on-five rounds of plant and defuse, seen from above. Buy guns, throw smokes,
+            play against bots or send a friend a four-letter room code.
+          </p>
+          <div class="cta-row">
+            <a class="btn btn-primary" href="{{GAME_URL}}">Play now</a>
+            <a class="btn btn-ghost" href="{{REPO_URL}}">View source</a>
+          </div>
+          <p class="note">
+            The game server runs on a free tier that sleeps when nobody is playing. If the page
+            takes a while to open, give it up to a minute to wake up.
+          </p>
+        </div>
+        <figure class="hero-shot">
+          <img
+            src="img/fog.jpg"
+            width="1280"
+            height="720"
+            alt="Spectating a bot holding A site on Dust II, with walls casting fog-of-war shadows."
+          />
+        </figure>
+      </section>
+
+      <section id="features" class="section">
+        <h2>What's in it</h2>
+        <ul class="features">
+          <li>
+            <h3>MR12 matches</h3>
+            <p>First to 13 rounds wins. Teams swap sides at the half, and a 12–12 tie goes to overtime.</p>
+          </li>
+          <li>
+            <h3>Round economy</h3>
+            <p>
+              Win and loss bonuses, kill rewards and a buy menu with rifles, SMGs, pistols, armor
+              and defuse kits.
+            </p>
+          </li>
+          <li>
+            <h3>Utility</h3>
+            <p>HE grenades, flashbangs, smokes that block sight lines, and molotovs that burn an area.</p>
+          </li>
+          <li>
+            <h3>Bots</h3>
+            <p>
+              Quick Match fills both teams with bots at easy, normal or hard. They buy, push sites,
+              plant and defuse.
+            </p>
+          </li>
+          <li>
+            <h3>Online rooms</h3>
+            <p>
+              Create a room, share its four-letter code, and play together. Bots can backfill
+              anyone who leaves.
+            </p>
+          </li>
+          <li>
+            <h3>Fog of war</h3>
+            <p>
+              You only see what your player can see. The server never sends enemies hidden behind
+              walls or smoke.
+            </p>
+          </li>
+        </ul>
+      </section>
+
+      <section id="screens" class="section">
+        <h2>Screens</h2>
+        <div class="gallery">
+          <figure>
+            <img
+              src="img/spawn.jpg"
+              width="1280"
+              height="720"
+              loading="lazy"
+              alt="Terrorist team lined up at T spawn during freeze time, with the C4 reminder on screen."
+            />
+            <figcaption>Freeze time at T spawn. You have the C4.</figcaption>
+          </figure>
+          <figure>
+            <img
+              src="img/buy.jpg"
+              width="1280"
+              height="720"
+              loading="lazy"
+              alt="The buy menu listing pistols, SMGs, rifles, armor and grenades with prices."
+            />
+            <figcaption>The buy menu, open during freeze time.</figcaption>
+          </figure>
+          <figure>
+            <img
+              src="img/menu.jpg"
+              width="640"
+              height="640"
+              loading="lazy"
+              alt="The game's main menu with Quick Match, Create Room and Join by code."
+            />
+            <figcaption>Quick Match, create a room, or join one by code.</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section id="how" class="section how">
+        <div>
+          <h2>How to play</h2>
+          <ol class="steps">
+            <li>Open <a href="{{GAME_URL}}">the game</a> and type a name.</li>
+            <li>Pick <strong>Quick Match vs Bots</strong> to jump straight into Dust II.</li>
+            <li>
+              Or pick <strong>Create Room</strong>, choose Dust II or Mirage, and send the
+              four-letter code to friends so they can <strong>Join</strong>.
+            </li>
+            <li>Press <kbd>B</kbd> during freeze time to buy, then go plant or defuse the bomb.</li>
+          </ol>
+          <p class="hint">Works best on a desktop browser with a keyboard and mouse.</p>
+        </div>
+        <div>
+          <h2>Controls</h2>
+          <div class="table-wrap">
+            <table class="controls">
+              <thead>
+                <tr><th scope="col">Key</th><th scope="col">Action</th></tr>
+              </thead>
+              <tbody>
+{{CONTROLS}}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="section closer">
+        <h2>Ready?</h2>
+        <a class="btn btn-primary" href="{{GAME_URL}}">Play now</a>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>
+        CS2D is a fan project, not affiliated with Valve.
+        Source and issues on <a href="{{REPO_URL}}">GitHub</a>.
+      </p>
+    </footer>
+  </body>
+</html>
