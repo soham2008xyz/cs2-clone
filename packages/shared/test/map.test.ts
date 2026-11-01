@@ -37,9 +37,10 @@ function tileIndexAt(map: CompiledMap, px: number, py: number): number {
 // Invariants every full-size 5v5 map must hold; per-map specifics follow below.
 describe.each([
   // dust2's top-mid smoke anchor deliberately sits on the xbox crate, so only
-  // mirage requires its utility anchors to be walkable and reachable
+  // the newer maps require their utility anchors to be walkable and reachable
   { name: 'dust2', width: 84, height: 60, midTile: [37, 30], utilityOnFloor: false },
   { name: 'mirage', width: 88, height: 62, midTile: [40, 30], utilityOnFloor: true },
+  { name: 'inferno', width: 86, height: 62, midTile: [38, 42], utilityOnFloor: true },
 ])('$name (full-size map invariants)', ({ name, width, height, midTile, utilityOnFloor }) => {
   const map = getMap(name);
 
@@ -132,6 +133,39 @@ describe('mirage', () => {
     expect(map.isSolid(24, 29)).toBe(true);
     expect(map.isSolid(24, 30)).toBe(false);
     expect(map.isSolid(24, 31)).toBe(true);
+  });
+});
+
+describe('inferno', () => {
+  const map = getMap('inferno');
+
+  it('is offered under its display name', () => {
+    expect(map.def.displayName).toBe('Inferno');
+  });
+
+  it('pinches are the only route through their walls', () => {
+    // Banana sandbags: walls at x11 and x16, 4-tile gap x12-15 into B
+    expect(map.isSolid(11, 14)).toBe(true);
+    for (let tx = 12; tx <= 15; tx++) expect(map.isSolid(tx, 14)).toBe(false);
+    expect(map.isSolid(16, 14)).toBe(true);
+    // Apartments door: 2-tile gap x60-61 at y55 into the boiler room
+    expect(map.isSolid(59, 55)).toBe(true);
+    expect(map.isSolid(60, 55)).toBe(false);
+    expect(map.isSolid(61, 55)).toBe(false);
+    expect(map.isSolid(62, 55)).toBe(true);
+    // Library door: 2-tile gap x72-73 at y24
+    expect(map.isSolid(71, 24)).toBe(true);
+    expect(map.isSolid(72, 24)).toBe(false);
+    expect(map.isSolid(73, 24)).toBe(false);
+    expect(map.isSolid(74, 24)).toBe(true);
+  });
+
+  it('the Banana car leaves a 2-tile lane on both sides', () => {
+    for (const ty of [27, 28]) {
+      expect(map.isSolid(13, ty)).toBe(true);
+      expect(map.isSolid(14, ty)).toBe(true);
+      for (const tx of [11, 12, 15, 16]) expect(map.isSolid(tx, ty)).toBe(false);
+    }
   });
 });
 

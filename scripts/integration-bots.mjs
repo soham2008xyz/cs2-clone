@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
 
 const PORT = 8092;
-// which map the bot-vs-bot match runs on (CI uses dust2; e.g. CS2D_ITEST_MAP=mirage)
+// which map the bot-vs-bot match runs on (CI uses dust2; e.g. CS2D_ITEST_MAP=mirage or inferno)
 const MAP = process.env.CS2D_ITEST_MAP ?? 'dust2';
 const TSX_CLI = fileURLToPath(new URL('../node_modules/tsx/dist/cli.mjs', import.meta.url));
 /** Collapse CR/LF so values from the server can't forge extra log lines. */

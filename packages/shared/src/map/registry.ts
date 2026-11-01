@@ -1,5 +1,6 @@
 import { compileMap } from './compile.js';
 import { DUST2 } from './dust2.js';
+import { INFERNO } from './inferno.js';
 import { MIRAGE } from './mirage.js';
 import { TEST_ARENA } from './testarena.js';
 import type { CompiledMap, MapDef } from './types.js';
@@ -28,4 +29,5 @@ export function listMaps(): string[] {
 
 registerMap(DUST2);
 registerMap(MIRAGE);
+registerMap(INFERNO);
 registerMap(TEST_ARENA);
