@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
 
 const PORT = 8092;
+// which map the bot-vs-bot match runs on (CI uses dust2; e.g. CS2D_ITEST_MAP=mirage)
+const MAP = process.env.CS2D_ITEST_MAP ?? 'dust2';
 const TSX_CLI = fileURLToPath(new URL('../node_modules/tsx/dist/cli.mjs', import.meta.url));
 /** Collapse CR/LF so values from the server can't forge extra log lines. */
 const oneLine = (v) => String(v).replaceAll(/[\r\n]+/g, ' ');
@@ -72,10 +74,10 @@ async function main() {
   const createRes = await fetch(`http://localhost:${PORT}/rooms`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ map: 'dust2', backfillBots: false }),
+    body: JSON.stringify({ map: MAP, backfillBots: false }),
   });
   const { code: roomCode } = await createRes.json();
-  ok(`created room ${roomCode} (dust2)`);
+  ok(`created room ${roomCode} (${MAP})`);
 
   let state = { roster: [], match: null, rounds: [], nadeThrows: 0 };
   ws = new WebSocket(`ws://localhost:${PORT}?room=${roomCode}`);

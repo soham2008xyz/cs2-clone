@@ -4,6 +4,7 @@ export * from './map/types.js';
 export * from './map/builder.js';
 export * from './map/compile.js';
 export * from './map/dust2.js';
+export * from './map/mirage.js';
 export * from './map/registry.js';
 export * from './sim/collision.js';
 export * from './sim/movement.js';

@@ -1,4 +1,4 @@
-import { raycastGrid, TILE_SIZE, type CompiledMap, type Vec2 } from '@cs2d/shared';
+import { PLAYER_RADIUS, raycastGrid, TILE_SIZE, type CompiledMap, type Vec2 } from '@cs2d/shared';
 
 interface NodeRec {
   tx: number;
@@ -172,13 +172,23 @@ export function findPath(map: CompiledMap, startPx: Vec2, goalPx: Vec2, isBlocke
   return [];
 }
 
+/**
+ * Can a player body walk straight from a to b? Casts the center line plus two
+ * rails offset by PLAYER_RADIUS, so a shortcut never skims a wall corner the
+ * bot's collision circle would snag on (a single thin ray pinned bots there).
+ */
 function hasDirectLine(map: CompiledMap, a: Vec2, b: Vec2, isBlocked?: BlockedFn): boolean {
   const dx = b.x - a.x;
   const dy = b.y - a.y;
   const d = Math.hypot(dx, dy);
   if (d === 0) return true;
   const dir = { x: dx / d, y: dy / d };
-  return raycastGrid(a, dir, d, TILE_SIZE, isBlocked ?? map.isSolid) >= d - 1;
+  const blocked = isBlocked ?? map.isSolid;
+  for (const side of [0, 1, -1]) {
+    const origin = { x: a.x - dir.y * PLAYER_RADIUS * side, y: a.y + dir.x * PLAYER_RADIUS * side };
+    if (raycastGrid(origin, dir, d, TILE_SIZE, blocked) < d - 1) return false;
+  }
+  return true;
 }
 
 /** Shortcuts waypoints with direct LOS from the current position — cuts zigzag from grid-snapped A*. */

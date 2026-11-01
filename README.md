@@ -23,6 +23,8 @@ npm run dev:client   # browser client on :5173 (open this in your browser)
 
 Open the client, pick a name, and either **Quick Match vs Bots**, **Create
 Room** (share the 4-letter code with a friend), or **Join Room** with a code.
+Quick Match plays Dust II; **Create Room** lets you pick a map: Dust II
+(`dust2`) or Mirage (`mirage`).
 
 ### Single-server (production) mode
 

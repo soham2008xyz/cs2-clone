@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compileMap, getMap, MapBuilder, TILE_SIZE } from '@cs2d/shared';
+import { compileMap, getMap, MapBuilder, PLAYER_RADIUS, TILE_SIZE, type CompiledMap, type Vec2 } from '@cs2d/shared';
 import { findPath, smoothPath } from '../src/bots/pathfinding.js';
 
 function room() {
@@ -20,6 +20,24 @@ function corridorWithDogleg() {
   b.spawn('T', 2, 2);
   b.spawn('CT', 15, 15);
   return compileMap(b.build('dogleg', 'Dogleg'));
+}
+
+/** True if a PLAYER_RADIUS circle swept from a to b never overlaps a solid tile. */
+function bodyClears(map: CompiledMap, a: Vec2, b: Vec2): boolean {
+  const steps = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / 2));
+  for (let s = 0; s <= steps; s++) {
+    const x = a.x + ((b.x - a.x) * s) / steps;
+    const y = a.y + ((b.y - a.y) * s) / steps;
+    for (let ty = Math.floor((y - PLAYER_RADIUS) / TILE_SIZE); ty <= Math.floor((y + PLAYER_RADIUS) / TILE_SIZE); ty++) {
+      for (let tx = Math.floor((x - PLAYER_RADIUS) / TILE_SIZE); tx <= Math.floor((x + PLAYER_RADIUS) / TILE_SIZE); tx++) {
+        if (!map.isSolid(tx, ty)) continue;
+        const nx = Math.max(tx * TILE_SIZE, Math.min(x, (tx + 1) * TILE_SIZE));
+        const ny = Math.max(ty * TILE_SIZE, Math.min(y, (ty + 1) * TILE_SIZE));
+        if (Math.hypot(x - nx, y - ny) < PLAYER_RADIUS - 0.5) return false;
+      }
+    }
+  }
+  return true;
 }
 
 const at = (tx: number, ty: number) => ({ x: (tx + 0.5) * TILE_SIZE, y: (ty + 0.5) * TILE_SIZE });
@@ -73,6 +91,25 @@ describe('smoothPath', () => {
     expect(smoothed).toHaveLength(1); // fully open room -> straight line
   });
 
+  it("never shortcuts a corner closer than the player's body radius", () => {
+    // regression: a single thin LOS ray let smoothing skim wall corners, pinning bots
+    const map = getMap('mirage');
+    const routes: Array<[Vec2, Vec2]> = [
+      [map.spawns.T[0], map.siteCenters.A!],
+      [map.spawns.T[0], map.siteCenters.B!],
+      [map.spawns.CT[0], map.siteCenters.A!],
+      [map.spawns.CT[0], map.siteCenters.B!],
+      [map.spawns.T[0], map.spawns.CT[0]],
+    ];
+    for (const [from, to] of routes) {
+      let cursor = from;
+      for (const p of smoothPath(map, from, findPath(map, from, to))) {
+        expect(bodyClears(map, cursor, p), `segment (${cursor.x},${cursor.y})→(${p.x},${p.y})`).toBe(true);
+        cursor = p;
+      }
+    }
+  });
+
   it('keeps enough waypoints to navigate around a wall', () => {
     const map = corridorWithDogleg();
     const raw = findPath(map, at(2, 2), at(15, 15));
@@ -92,6 +129,24 @@ describe('findPath on Dust II', () => {
     const last = path[path.length - 1];
     expect(Math.floor(last.x / TILE_SIZE)).toBe(Math.floor(ct.x / TILE_SIZE));
     expect(Math.floor(last.y / TILE_SIZE)).toBe(Math.floor(ct.y / TILE_SIZE));
+    for (const p of path) expect(map.isSolid(Math.floor(p.x / TILE_SIZE), Math.floor(p.y / TILE_SIZE))).toBe(false);
+  });
+});
+
+describe('findPath on Mirage', () => {
+  const map = getMap('mirage');
+  const tileOf = (p: { x: number; y: number }) => [Math.floor(p.x / TILE_SIZE), Math.floor(p.y / TILE_SIZE)];
+
+  it.each([
+    ['T spawn → CT spawn', () => map.spawns.T[0], () => map.spawns.CT[0]],
+    ['T spawn → A site', () => map.spawns.T[0], () => map.siteCenters.A!],
+    ['T spawn → B site', () => map.spawns.T[0], () => map.siteCenters.B!],
+    ['CT spawn → A site', () => map.spawns.CT[0], () => map.siteCenters.A!],
+    ['CT spawn → B site', () => map.spawns.CT[0], () => map.siteCenters.B!],
+  ])('resolves %s', (_name, from, to) => {
+    const path = findPath(map, from(), to());
+    expect(path.length).toBeGreaterThan(5);
+    expect(tileOf(path[path.length - 1])).toEqual(tileOf(to()));
     for (const p of path) expect(map.isSolid(Math.floor(p.x / TILE_SIZE), Math.floor(p.y / TILE_SIZE))).toBe(false);
   });
 });

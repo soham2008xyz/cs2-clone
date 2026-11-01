@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { TILE_SIZE } from '../src/constants.js';
-import { getMap } from '../src/map/registry.js';
+import { getMap, listMaps } from '../src/map/registry.js';
 import type { CompiledMap } from '../src/map/types.js';
 
 /** BFS over walkable tiles from a starting px position; returns visited set. */
@@ -34,21 +34,22 @@ function tileIndexAt(map: CompiledMap, px: number, py: number): number {
   return Math.floor(py / TILE_SIZE) * map.width + Math.floor(px / TILE_SIZE);
 }
 
-describe('dust2', () => {
-  const map = getMap('dust2');
+// Invariants every full-size 5v5 map must hold; per-map specifics follow below.
+describe.each([
+  // dust2's top-mid smoke anchor deliberately sits on the xbox crate, so only
+  // mirage requires its utility anchors to be walkable and reachable
+  { name: 'dust2', width: 84, height: 60, midTile: [37, 30], utilityOnFloor: false },
+  { name: 'mirage', width: 88, height: 62, midTile: [40, 30], utilityOnFloor: true },
+])('$name (full-size map invariants)', ({ name, width, height, midTile, utilityOnFloor }) => {
+  const map = getMap(name);
 
-  it('buy zones cover each spawn for the right team only', () => {
-    const [tSpawn] = map.spawns.T;
-    const [ctSpawn] = map.spawns.CT;
-    expect(map.buyzoneAt(tSpawn.x, tSpawn.y)).toBe('T');
-    expect(map.buyzoneAt(ctSpawn.x, ctSpawn.y)).toBe('CT');
-    // mid is nobody's buy area
-    expect(map.buyzoneAt(37.5 * TILE_SIZE, 30.5 * TILE_SIZE)).toBeNull();
+  it('is registered', () => {
+    expect(listMaps()).toContain(name);
   });
 
   it('compiles with equal-width rows and border walls', () => {
-    expect(map.width).toBe(84);
-    expect(map.height).toBe(60);
+    expect(map.width).toBe(width);
+    expect(map.height).toBe(height);
     for (let tx = 0; tx < map.width; tx++) {
       expect(map.isSolid(tx, 0)).toBe(true);
       expect(map.isSolid(tx, map.height - 1)).toBe(true);
@@ -67,10 +68,22 @@ describe('dust2', () => {
     }
   });
 
-  it('connects T spawn to every key area (both sites, mid, tunnels, long)', () => {
+  it('buy zones cover each spawn for the right team only', () => {
+    for (const s of map.spawns.T) expect(map.buyzoneAt(s.x, s.y)).toBe('T');
+    for (const s of map.spawns.CT) expect(map.buyzoneAt(s.x, s.y)).toBe('CT');
+    // mid is nobody's buy area
+    expect(map.buyzoneAt((midTile[0] + 0.5) * TILE_SIZE, (midTile[1] + 0.5) * TILE_SIZE)).toBeNull();
+  });
+
+  it('bomb sites report correctly via siteAt', () => {
+    expect(map.siteAt(map.siteCenters.A!.x, map.siteCenters.A!.y)).toBe('A');
+    expect(map.siteAt(map.siteCenters.B!.x, map.siteCenters.B!.y)).toBe('B');
+    expect(map.siteAt(map.spawns.T[0].x, map.spawns.T[0].y)).toBeNull();
+  });
+
+  it('connects T spawn to CT spawn, both sites and every callout (and utility anchor where required)', () => {
     const tSpawn = map.spawns.T[0];
     const reach = flood(map, tSpawn.x, tSpawn.y);
-
     const mustReach: Array<[string, number, number]> = [
       ['CT spawn', map.spawns.CT[0].x, map.spawns.CT[0].y],
       ['A site', map.siteCenters.A!.x, map.siteCenters.A!.y],
@@ -79,11 +92,16 @@ describe('dust2', () => {
     for (const c of map.def.callouts) {
       mustReach.push([c.name, (c.tx + 0.5) * TILE_SIZE, (c.ty + 0.5) * TILE_SIZE]);
     }
-    for (const [name, x, y] of mustReach) {
-      expect(map.isSolidAt(x, y), `${name} should be walkable`).toBe(false);
-      expect(reach.has(tileIndexAt(map, x, y)), `${name} should be reachable from T spawn`).toBe(true);
+    if (utilityOnFloor) for (const u of map.utilitySpots) mustReach.push([`${u.kind} ${u.site}`, u.pos.x, u.pos.y]);
+    for (const [label, x, y] of mustReach) {
+      expect(map.isSolidAt(x, y), `${label} should be walkable`).toBe(false);
+      expect(reach.has(tileIndexAt(map, x, y)), `${label} should be reachable from T spawn`).toBe(true);
     }
   });
+});
+
+describe('dust2', () => {
+  const map = getMap('dust2');
 
   it('door pinches are the only route through their walls', () => {
     // mid doors: y=40 row solid across mid except gap x37-38
@@ -96,11 +114,24 @@ describe('dust2', () => {
     expect(map.isSolid(73, 34)).toBe(false);
     expect(map.isSolid(75, 34)).toBe(true);
   });
+});
 
-  it('bomb sites report correctly via siteAt', () => {
-    expect(map.siteAt(map.siteCenters.A!.x, map.siteCenters.A!.y)).toBe('A');
-    expect(map.siteAt(map.siteCenters.B!.x, map.siteCenters.B!.y)).toBe('B');
-    expect(map.siteAt(map.spawns.T[0].x, map.spawns.T[0].y)).toBeNull();
+describe('mirage', () => {
+  const map = getMap('mirage');
+
+  it('is offered under its display name', () => {
+    expect(map.def.displayName).toBe('Mirage');
+  });
+
+  it('pinches are the only route through their walls', () => {
+    // palace door: gap at (55,55) between walls above and below
+    expect(map.isSolid(55, 54)).toBe(true);
+    expect(map.isSolid(55, 55)).toBe(false);
+    expect(map.isSolid(55, 56)).toBe(true);
+    // window: one-tile-tall gap from window room into mid
+    expect(map.isSolid(24, 29)).toBe(true);
+    expect(map.isSolid(24, 30)).toBe(false);
+    expect(map.isSolid(24, 31)).toBe(true);
   });
 });
 
