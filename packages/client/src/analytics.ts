@@ -11,12 +11,11 @@ export const DEFAULT_GA_MEASUREMENT_ID = 'G-78Z8QWX50W';
 export const OPT_OUT_KEY = 'cs2d:analytics';
 const ID_PATTERN = /^G-[A-Z0-9]{4,20}$/;
 
-type Gtag = (...args: unknown[]) => void;
-type GaWindow = Window & { dataLayer?: unknown[]; gtag?: Gtag };
+type GaWindow = Window & { dataLayer?: unknown[]; gtag?: typeof gtag };
 
 export type MatchStartMethod = 'quick_match' | 'create_room' | 'join_code' | 'join_list';
 
-let gtag: Gtag | null = null;
+let dataLayer: unknown[] | null = null; // set once GA is started
 let matchStartedAt: number | null = null;
 
 /** Picks the measurement ID from the build env; null means analytics stays off. */
@@ -46,15 +45,12 @@ export function trackingAllowed(win: Window = window): boolean {
 
 /** Injects gtag.js and sends the initial page_view. Returns whether GA was started. */
 export function initAnalytics(id: string | null, win: Window = window): boolean {
-  if (gtag || !id || !trackingAllowed(win)) return false;
+  if (dataLayer !== null || !id || !trackingAllowed(win)) return false;
   const w = win as GaWindow;
   const doc = win.document;
-  w.dataLayer = w.dataLayer ?? [];
-  // gtag.js expects the real `arguments` object in dataLayer, not an array
-  w.gtag = function gtagShim() {
-    w.dataLayer!.push(arguments);
-  };
-  gtag = w.gtag;
+  w.dataLayer ??= [];
+  dataLayer = w.dataLayer;
+  w.gtag = gtag;
   gtag('js', new Date());
   gtag('config', id, { allow_google_signals: false, allow_ad_personalization_signals: false });
 
@@ -65,9 +61,14 @@ export function initAnalytics(id: string | null, win: Window = window): boolean 
   return true;
 }
 
+/** The standard gtag() shim. gtag.js reads the real `arguments` object from dataLayer, not an array. */
+function gtag(...args: unknown[]): void {
+  if (args.length > 0) dataLayer?.push(arguments);
+}
+
 /** Sends a GA event; a no-op while analytics is off. */
 export function track(event: string, params: Record<string, string | number | boolean> = {}): void {
-  gtag?.('event', event, params);
+  gtag('event', event, params);
 }
 
 export function trackMatchStart(method: MatchStartMethod, map: string, mode: 'bots' | 'online', now = Date.now()): void {
@@ -92,8 +93,8 @@ function elapsedSec(now: number): number {
   return matchStartedAt === null ? 0 : Math.max(0, Math.round((now - matchStartedAt) / 1000));
 }
 
-/** Test hook: forget the gtag function and match timer. */
+/** Test hook: forget the dataLayer and match timer. */
 export function resetAnalytics(): void {
-  gtag = null;
+  dataLayer = null;
   matchStartedAt = null;
 }
