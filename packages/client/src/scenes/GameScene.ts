@@ -33,6 +33,7 @@ import { SnapshotBuffer, type RemoteState } from '../net/interpolation.js';
 import { renderMap } from '../render/mapRender.js';
 import { VisionCache } from '../render/visionCache.js';
 import { session } from '../session.js';
+import { trackMatchEnd, trackMatchStart } from '../analytics.js';
 
 /** How long the disconnect message stays up before the player returns to the menu. */
 const SESSION_END_DELAY_MS = 3000;
@@ -205,6 +206,11 @@ export class GameScene extends Phaser.Scene {
       }
       this.myId = msg.id;
       this.statusText.setVisible(false);
+      if (session.entry) {
+        // only now is the player admitted and the map authoritative; report each menu entry once
+        trackMatchStart(session.entry, msg.map, session.botsRequested ? 'bots' : 'online');
+        session.entry = undefined;
+      }
     };
     this.conn.onRoster = (msg) => this.applyRoster(msg.players);
     this.conn.onSnapshot = (msg) => {
@@ -344,6 +350,7 @@ export class GameScene extends Phaser.Scene {
         const label = ev.winner === 'T' ? 'TERRORISTS WIN THE MATCH' : 'COUNTER-TERRORISTS WIN THE MATCH';
         this.game.events.emit('hud:banner', { text: label, color: '#ffe680', ttl: 8000 });
         this.game.events.emit('hud:matchend', { winner: ev.winner, roster: [...this.roster.values()] });
+        trackMatchEnd(ev.winner === this.myTeam ? 'win' : 'loss', session.map);
         this.time.delayedCall(8000, () => {
           this.conn.disconnect();
           this.game.events.emit('session:end');

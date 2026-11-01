@@ -66,6 +66,32 @@ GitHub Pages at <https://soham2008xyz.github.io/cs2-clone/> on every push to
 <https://cs2d.sohambanerjee.me/>; set the `CS2D_GAME_URL` repository variable
 to point it somewhere else.
 
+### Analytics
+
+The game client and the landing page report to the same Google Analytics 4
+property (`G-78Z8QWX50W` by default). Both skip loading GA for visitors with
+Do Not Track or Global Privacy Control on, and no player names, chat or room
+codes are sent.
+
+- **Game client** (`packages/client/src/analytics.ts`): the ID is read at build
+  time from `VITE_GA_MEASUREMENT_ID`. Unset or empty means the default ID in
+  `npm run build` and no tracking in `npm run dev:client` or tests; `off`
+  disables it everywhere. To try it locally, run
+  `VITE_GA_MEASUREMENT_ID=G-XXXXXXX npm run dev:client` and watch GA's
+  DebugView. On Render, add `VITE_GA_MEASUREMENT_ID` under the service's
+  **Environment** settings (it is baked in at build time, so redeploy after
+  changing it). Players can opt out in their browser with
+  `localStorage.setItem('cs2d:analytics', 'off')`.
+  Events: `page_view`, `match_start` (`method`: quick_match / create_room /
+  join_code / join_list, `map`, `mode`: bots / online), `match_end` (`result`,
+  `map`, `duration_sec`) and `match_leave` (`reason`, `duration_sec`) when a
+  player returns to the menu before the match ends.
+- **Landing page** (`site/`): `CS2D_GA_MEASUREMENT_ID` sets the ID for
+  `npm run build:site`, and the Pages workflow reads it from the repository
+  variable of the same name. Unset or empty uses the default, `off` disables
+  it. Besides `page_view` it sends `play_click` (`location`) for the
+  "Play now" links and passes the GA client ID on to the game's domain.
+
 ### Server limits
 
 The server caps what one client can use. Each cap has an env override:

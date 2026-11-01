@@ -129,6 +129,7 @@ describe('menu entry points', () => {
     expect(onStart).toHaveBeenCalledTimes(1);
     const { session } = await import('../src/session.js');
     expect(session).toMatchObject({ name: 'Ann', roomCode: 'QUIK', map: 'dust2', botsRequested: { perTeam: 5, difficulty: 'hard' } });
+    expect(session.entry).toBe('quick_match'); // reported by GameScene once the server admits us
   });
 
   it('quick play falls back to a generic message for non-capacity failures', async () => {
@@ -151,6 +152,8 @@ describe('menu entry points', () => {
     await flush();
     expect(createRoom).toHaveBeenCalledWith('testarena', true, '');
     expect(onStart).toHaveBeenCalled();
+    const { session } = await import('../src/session.js');
+    expect(session.entry).toBe('create_room');
   });
 
   it('refuses to join without a room code', () => {
@@ -175,6 +178,7 @@ describe('menu entry points', () => {
     expect(onStart).toHaveBeenCalledTimes(1);
     const { session } = await import('../src/session.js');
     expect(session).toMatchObject({ roomCode: 'ABCD', map: 'testarena' });
+    expect(session.entry).toBe('join_code');
   });
 
   it('names an anonymous player', () => {

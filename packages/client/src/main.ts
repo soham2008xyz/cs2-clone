@@ -4,6 +4,7 @@ import { GameScene } from './scenes/GameScene.js';
 import { HudScene } from './scenes/HudScene.js';
 import { initMenu, resumeMenu } from './menu.js';
 import { teardownChat } from './chat.js';
+import { initAnalytics, resolveMeasurementId, trackMatchLeave } from './analytics.js';
 
 let game: Phaser.Game | null = null;
 
@@ -32,6 +33,7 @@ function startGame(): void {
 }
 
 function returnToMenu(error?: string): void {
+  trackMatchLeave(error ? 'error' : 'quit'); // no-op after match_end already reported
   game?.destroy(true);
   game = null;
   teardownChat();
@@ -48,4 +50,5 @@ function restartGame(): void {
   startGame();
 }
 
+initAnalytics(resolveMeasurementId(import.meta.env.VITE_GA_MEASUREMENT_ID, import.meta.env.PROD));
 initMenu(startGame);

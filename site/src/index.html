@@ -26,6 +26,7 @@
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%2314120c'/%3E%3Ccircle cx='16' cy='16' r='9' fill='none' stroke='%23d9a33c' stroke-width='2.5'/%3E%3Cpath d='M16 3v8M16 21v8M3 16h8M21 16h8' stroke='%23d9a33c' stroke-width='2.5'/%3E%3C/svg%3E"
     />
     <link rel="stylesheet" href="styles.css" />
+{{ANALYTICS}}
   </head>
   <body>
     <header class="topbar">
@@ -48,7 +49,7 @@
             play against bots or send a friend a four-letter room code.
           </p>
           <div class="cta-row">
-            <a class="btn btn-primary" href="{{GAME_URL}}">Play now</a>
+            <a class="btn btn-primary" href="{{GAME_URL}}" data-cta="hero">Play now</a>
             <a class="btn btn-ghost" href="{{REPO_URL}}">View source</a>
           </div>
           <p class="note">
@@ -148,7 +149,7 @@
         <div>
           <h2>How to play</h2>
           <ol class="steps">
-            <li>Open <a href="{{GAME_URL}}">the game</a> and type a name.</li>
+            <li>Open <a href="{{GAME_URL}}" data-cta="how-to">the game</a> and type a name.</li>
             <li>Pick <strong>Quick Match vs Bots</strong> to jump straight into Dust II.</li>
             <li>
               Or pick <strong>Create Room</strong>, choose Dust II or Mirage, and send the
@@ -175,7 +176,7 @@
 
       <section class="section closer">
         <h2>Ready?</h2>
-        <a class="btn btn-primary" href="{{GAME_URL}}">Play now</a>
+        <a class="btn btn-primary" href="{{GAME_URL}}" data-cta="footer">Play now</a>
       </section>
     </main>
 

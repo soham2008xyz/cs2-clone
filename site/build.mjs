@@ -4,6 +4,7 @@
 //   CS2D_GAME_URL  where "Play now" points (default: the live game)
 //   CS2D_REPO_URL  where the GitHub links point
 //   CS2D_SITE_URL  where this page is hosted; social previews need absolute URLs
+//   CS2D_GA_MEASUREMENT_ID  GA4 property; unset/empty uses DEFAULT_GA_MEASUREMENT_ID, "off" disables
 // The controls table is generated from the "## Controls" table in README.md so
 // the two never drift apart. No dependencies: plain Node only.
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -13,6 +14,8 @@ import { fileURLToPath } from 'node:url';
 export const DEFAULT_GAME_URL = 'https://cs2d.sohambanerjee.me/';
 export const DEFAULT_REPO_URL = 'https://github.com/soham2008xyz/cs2-clone';
 export const DEFAULT_SITE_URL = 'https://soham2008xyz.github.io/cs2-clone/';
+// Same property as the game client (packages/client/src/analytics.ts).
+export const DEFAULT_GA_MEASUREMENT_ID = 'G-78Z8QWX50W';
 
 const siteDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = dirname(siteDir);
@@ -38,6 +41,49 @@ export function checkUrl(name, value) {
     throw new Error(`${name} must be http(s): ${JSON.stringify(value)}`);
   }
   return url.href;
+}
+
+/** GA4 ID to embed, or null when disabled. Anything that isn't a G- ID fails the build. */
+export function resolveMeasurementId(value) {
+  const id = (value ?? '').trim();
+  if (id.toLowerCase() === 'off') return null;
+  if (id === '') return DEFAULT_GA_MEASUREMENT_ID;
+  if (!/^G-[A-Z0-9]{4,20}$/.test(id)) {
+    throw new Error(`CS2D_GA_MEASUREMENT_ID is not a GA4 measurement ID: ${JSON.stringify(id)}`);
+  }
+  return id;
+}
+
+/**
+ * gtag.js snippet for <head>. It loads nothing for visitors with Do Not Track or
+ * Global Privacy Control on, sends a play_click event for "Play now" links
+ * (data-cta), and carries the GA client ID over to the game's domain.
+ */
+export function renderAnalytics(id, gameUrl) {
+  if (!id) return '';
+  const gameHost = new URL(gameUrl).hostname;
+  return `    <script>
+      (function () {
+        var n = navigator;
+        if (n.doNotTrack === '1' || window.doNotTrack === '1' || n.globalPrivacyControl === true) return;
+        var s = document.createElement('script');
+        s.async = true;
+        s.src = 'https://www.googletagmanager.com/gtag/js?id=${id}';
+        document.head.appendChild(s);
+        window.dataLayer = window.dataLayer || [];
+        function gtag() { dataLayer.push(arguments); }
+        gtag('js', new Date());
+        gtag('config', '${id}', {
+          allow_google_signals: false,
+          allow_ad_personalization_signals: false,
+          linker: { domains: [${JSON.stringify(gameHost)}] }
+        });
+        document.addEventListener('click', function (e) {
+          var a = e.target.closest && e.target.closest('a[data-cta]');
+          if (a) gtag('event', 'play_click', { location: a.getAttribute('data-cta') });
+        });
+      })();
+    </script>`;
 }
 
 /** Returns [key, action] rows from the first markdown table under `## Controls`. */
@@ -81,8 +127,9 @@ export function renderControls(rows) {
     .join('\n');
 }
 
-export function renderPage(template, { gameUrl, repoUrl, siteUrl, controls }) {
+export function renderPage(template, { gameUrl, repoUrl, siteUrl, controls, analytics = '' }) {
   const out = template
+    .replace(/^\{\{ANALYTICS\}\}\n?/m, analytics ? `${analytics}\n` : '')
     .replaceAll('{{SITE_URL}}', escapeHtml(siteUrl))
     .replaceAll('{{GAME_URL}}', escapeHtml(gameUrl))
     .replaceAll('{{REPO_URL}}', escapeHtml(repoUrl))
@@ -98,9 +145,16 @@ export function build({ outDir = join(siteDir, 'dist'), env = process.env } = {}
   // Base URL for relative paths like img/x.jpg, so it must end in a slash.
   const siteBase = checkUrl('CS2D_SITE_URL', env.CS2D_SITE_URL || DEFAULT_SITE_URL);
   const siteUrl = siteBase.endsWith('/') ? siteBase : `${siteBase}/`;
+  const gaId = resolveMeasurementId(env.CS2D_GA_MEASUREMENT_ID);
   const readme = readFileSync(join(rootDir, 'README.md'), 'utf8');
   const template = readFileSync(join(siteDir, 'src', 'index.html'), 'utf8');
-  const html = renderPage(template, { gameUrl, repoUrl, siteUrl, controls: renderControls(parseControls(readme)) });
+  const html = renderPage(template, {
+    gameUrl,
+    repoUrl,
+    siteUrl,
+    controls: renderControls(parseControls(readme)),
+    analytics: renderAnalytics(gaId, gameUrl),
+  });
 
   rmSync(outDir, { recursive: true, force: true });
   mkdirSync(outDir, { recursive: true });
@@ -108,7 +162,7 @@ export function build({ outDir = join(siteDir, 'dist'), env = process.env } = {}
   writeFileSync(join(outDir, 'index.html'), html);
   // Tell GitHub Pages to serve files as-is instead of running Jekyll.
   writeFileSync(join(outDir, '.nojekyll'), '');
-  return { outDir, gameUrl, repoUrl, siteUrl };
+  return { outDir, gameUrl, repoUrl, siteUrl, gaId };
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
