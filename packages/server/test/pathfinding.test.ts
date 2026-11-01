@@ -91,15 +91,16 @@ describe('smoothPath', () => {
     expect(smoothed).toHaveLength(1); // fully open room -> straight line
   });
 
-  it("never shortcuts a corner closer than the player's body radius", () => {
+  it.each(['mirage', 'inferno'])("never shortcuts a corner closer than the player's body radius on %s", (name) => {
     // regression: a single thin LOS ray let smoothing skim wall corners, pinning bots
-    const map = getMap('mirage');
+    const map = getMap(name);
     const routes: Array<[Vec2, Vec2]> = [
       [map.spawns.T[0], map.siteCenters.A!],
       [map.spawns.T[0], map.siteCenters.B!],
       [map.spawns.CT[0], map.siteCenters.A!],
       [map.spawns.CT[0], map.siteCenters.B!],
       [map.spawns.T[0], map.spawns.CT[0]],
+      [map.spawns.CT[0], map.spawns.T[0]],
     ];
     for (const [from, to] of routes) {
       let cursor = from;
@@ -133,12 +134,13 @@ describe('findPath on Dust II', () => {
   });
 });
 
-describe('findPath on Mirage', () => {
-  const map = getMap('mirage');
+describe.each(['mirage', 'inferno'])('findPath on %s', (name) => {
+  const map = getMap(name);
   const tileOf = (p: { x: number; y: number }) => [Math.floor(p.x / TILE_SIZE), Math.floor(p.y / TILE_SIZE)];
 
   it.each([
     ['T spawn → CT spawn', () => map.spawns.T[0], () => map.spawns.CT[0]],
+    ['CT spawn → T spawn', () => map.spawns.CT[0], () => map.spawns.T[0]],
     ['T spawn → A site', () => map.spawns.T[0], () => map.siteCenters.A!],
     ['T spawn → B site', () => map.spawns.T[0], () => map.siteCenters.B!],
     ['CT spawn → A site', () => map.spawns.CT[0], () => map.siteCenters.A!],
