@@ -13,12 +13,8 @@ import type { MapDef } from './types.js';
  *   CT spawn → Ticket → A Site; CT spawn → Arch/Market → B Site;
  *   CT spawn → Window room (overlooks mid through the window).
  */
-function buildMirage(): MapDef {
-  const b = new MapBuilder(88, 62);
-
-  // ── T spawn (east) ──
-  b.carve(70, 26, 14, 12); // x70-83, y26-37
-
+/** A site plus the T-side routes into it: T Ramp → A Ramp, and Palace. */
+function carveA(b: MapBuilder): void {
   // ── A site (south-center) ──
   b.carve(28, 44, 20, 14); // x28-47, y44-57
   b.site('A', 32, 47, 10, 7); // plant zone x32-41, y47-53
@@ -37,7 +33,10 @@ function buildMirage(): MapDef {
   b.carve(48, 54, 22, 3); // x48-69, y54-56
   b.wall(55, 54, 1, 1);
   b.wall(55, 56, 1, 1); // palace door pinch at y55
+}
 
+/** Mid and everything hanging off it: connector/jungle, short, ladder room, window. */
+function carveMid(b: MapBuilder): void {
   // ── Mid ──
   b.carve(56, 28, 14, 5); // top mid x56-69, y28-32
   b.carve(26, 26, 30, 8); // mid x26-55, y26-33
@@ -55,7 +54,10 @@ function buildMirage(): MapDef {
   b.carve(18, 28, 6, 5); // x18-23, y28-32
   b.carve(24, 30, 2, 1); // the window x24-25, y30
   b.carve(18, 33, 4, 9); // x18-21, y33-41 down to CT spawn
+}
 
+/** B site, B Apartments from T spawn, and the CT spawn with its ticket/arch exits. */
+function carveBAndCt(b: MapBuilder): void {
   // ── B site (north-west) ──
   b.carve(6, 6, 18, 14); // x6-23, y6-19
   b.site('B', 9, 9, 9, 7); // plant zone x9-17, y9-15
@@ -74,7 +76,10 @@ function buildMirage(): MapDef {
   b.carve(8, 42, 12, 10); // x8-19, y42-51
   b.carve(20, 46, 8, 4); // ticket: CT ↔ A, x20-27, y46-49
   b.carve(8, 20, 4, 22); // arch / market: CT ↔ B, x8-11, y20-41
+}
 
+/** Spawns, buy zones, bot utility anchors and callouts. */
+function annotate(b: MapBuilder): void {
   for (let i = 0; i < 5; i++) {
     b.spawn('T', 74 + i, 30);
     b.spawn('T', 74 + i, 32);
@@ -109,7 +114,15 @@ function buildMirage(): MapDef {
     .callout('Arch', 9, 30)
     .callout('CT Spawn', 13, 48)
     .callout('T Spawn', 76, 31);
+}
 
+function buildMirage(): MapDef {
+  const b = new MapBuilder(88, 62);
+  b.carve(70, 26, 14, 12); // T spawn (east), x70-83, y26-37
+  carveA(b);
+  carveMid(b);
+  carveBAndCt(b);
+  annotate(b);
   return b.build('mirage', 'Mirage');
 }
 
