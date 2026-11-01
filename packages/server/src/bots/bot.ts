@@ -125,7 +125,7 @@ export class BotController {
   private lastPos: Vec2 = { x: 0, y: 0 };
   private lastStuckCheckTick = 0;
   /** Tile center to step back to after snagging on a corner, until `unstickUntil`. */
-  private unstick: Vec2 | null = null;
+  private unstick?: Vec2;
   private unstickUntil = 0;
   private assignedSite: 'A' | 'B' = 'A';
   private setupRound = -1;
@@ -235,7 +235,7 @@ export class BotController {
     if (this.unstick && tick < this.unstickUntil && dist(p.pos, this.unstick) > 1) {
       return { ...steerToward(p.pos, this.unstick, 1), switchSlot };
     }
-    this.unstick = null;
+    this.unstick = undefined;
     const goalPx = this.computeGoal(room, p, tick);
     if (!goalPx) return { buttons: 0, aim: p.aim, switchSlot };
 
