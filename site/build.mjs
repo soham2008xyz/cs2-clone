@@ -3,6 +3,7 @@
 // Env overrides:
 //   CS2D_GAME_URL  where "Play now" points (default: the live game)
 //   CS2D_REPO_URL  where the GitHub links point
+//   CS2D_SITE_URL  where this page is hosted; social previews need absolute URLs
 // The controls table is generated from the "## Controls" table in README.md so
 // the two never drift apart. No dependencies: plain Node only.
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -11,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 
 export const DEFAULT_GAME_URL = 'https://cs2d.sohambanerjee.me/';
 export const DEFAULT_REPO_URL = 'https://github.com/soham2008xyz/cs2-clone';
+export const DEFAULT_SITE_URL = 'https://soham2008xyz.github.io/cs2-clone/';
 
 const siteDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = dirname(siteDir);
@@ -79,8 +81,9 @@ export function renderControls(rows) {
     .join('\n');
 }
 
-export function renderPage(template, { gameUrl, repoUrl, controls }) {
+export function renderPage(template, { gameUrl, repoUrl, siteUrl, controls }) {
   const out = template
+    .replaceAll('{{SITE_URL}}', escapeHtml(siteUrl))
     .replaceAll('{{GAME_URL}}', escapeHtml(gameUrl))
     .replaceAll('{{REPO_URL}}', escapeHtml(repoUrl))
     .replaceAll('{{CONTROLS}}', controls);
@@ -92,9 +95,12 @@ export function renderPage(template, { gameUrl, repoUrl, controls }) {
 export function build({ outDir = join(siteDir, 'dist'), env = process.env } = {}) {
   const gameUrl = checkUrl('CS2D_GAME_URL', env.CS2D_GAME_URL || DEFAULT_GAME_URL);
   const repoUrl = checkUrl('CS2D_REPO_URL', env.CS2D_REPO_URL || DEFAULT_REPO_URL);
+  // Base URL for relative paths like img/x.jpg, so it must end in a slash.
+  const siteBase = checkUrl('CS2D_SITE_URL', env.CS2D_SITE_URL || DEFAULT_SITE_URL);
+  const siteUrl = siteBase.endsWith('/') ? siteBase : `${siteBase}/`;
   const readme = readFileSync(join(rootDir, 'README.md'), 'utf8');
   const template = readFileSync(join(siteDir, 'src', 'index.html'), 'utf8');
-  const html = renderPage(template, { gameUrl, repoUrl, controls: renderControls(parseControls(readme)) });
+  const html = renderPage(template, { gameUrl, repoUrl, siteUrl, controls: renderControls(parseControls(readme)) });
 
   rmSync(outDir, { recursive: true, force: true });
   mkdirSync(outDir, { recursive: true });
@@ -102,7 +108,7 @@ export function build({ outDir = join(siteDir, 'dist'), env = process.env } = {}
   writeFileSync(join(outDir, 'index.html'), html);
   // Tell GitHub Pages to serve files as-is instead of running Jekyll.
   writeFileSync(join(outDir, '.nojekyll'), '');
-  return { outDir, gameUrl, repoUrl };
+  return { outDir, gameUrl, repoUrl, siteUrl };
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

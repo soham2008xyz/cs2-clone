@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { DEFAULT_GAME_URL, build, checkUrl, parseControls, renderKey, renderPage } from './build.mjs';
+import { DEFAULT_GAME_URL, DEFAULT_SITE_URL, build, checkUrl, parseControls, renderKey, renderPage } from './build.mjs';
 
 const README = `# X
 
@@ -43,7 +43,7 @@ test('renderKey splits alternatives and keeps qualifiers as text', () => {
 });
 
 test('renderPage refuses to leave a placeholder unfilled', () => {
-  assert.throws(() => renderPage('{{GAME_URL}} {{NOPE}}', { gameUrl: 'a', repoUrl: 'b', controls: '' }), /NOPE/);
+  assert.throws(() => renderPage('{{GAME_URL}} {{NOPE}}', { gameUrl: 'a', repoUrl: 'b', siteUrl: 'c', controls: '' }), /NOPE/);
 });
 
 test('checkUrl accepts http(s) and rejects anything else', () => {
@@ -59,6 +59,10 @@ test('build writes a complete page from the real README', () => {
     const html = readFileSync(join(outDir, 'index.html'), 'utf8');
     assert.ok(html.includes(`href="${DEFAULT_GAME_URL}"`), 'Play now points at the live game');
     assert.ok(html.includes('<kbd>WASD</kbd>'), 'controls table came from README');
+    assert.ok(
+      html.includes(`<meta property="og:image" content="${DEFAULT_SITE_URL}img/spawn.jpg" />`),
+      'og:image is absolute, as link-preview crawlers require',
+    );
     assert.ok(!/\{\{[A-Z_]+\}\}/.test(html), 'no placeholders left');
     for (const asset of ['styles.css', 'img/fog.jpg', 'img/spawn.jpg', 'img/buy.jpg', 'img/menu.jpg', '.nojekyll']) {
       assert.ok(existsSync(join(outDir, asset)), `${asset} copied`);
@@ -72,11 +76,14 @@ test('build writes a complete page from the real README', () => {
   }
 });
 
-test('build honours CS2D_GAME_URL', () => {
+test('build honours CS2D_GAME_URL and CS2D_SITE_URL', () => {
   const outDir = mkdtempSync(join(tmpdir(), 'cs2d-site-'));
   try {
-    build({ outDir, env: { CS2D_GAME_URL: 'https://play.example.com/' } });
-    assert.ok(readFileSync(join(outDir, 'index.html'), 'utf8').includes('href="https://play.example.com/"'));
+    // no trailing slash, as actions/configure-pages reports it
+    build({ outDir, env: { CS2D_GAME_URL: 'https://play.example.com/', CS2D_SITE_URL: 'https://site.example.com/sub' } });
+    const html = readFileSync(join(outDir, 'index.html'), 'utf8');
+    assert.ok(html.includes('href="https://play.example.com/"'));
+    assert.ok(html.includes('content="https://site.example.com/sub/img/spawn.jpg"'));
   } finally {
     rmSync(outDir, { recursive: true, force: true });
   }
