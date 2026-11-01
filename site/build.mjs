@@ -62,9 +62,15 @@ export function parseControls(readme) {
 
 /** "1 / 2 / 3" → three <kbd>s; a trailing "(hold)" stays plain text. */
 export function renderKey(key) {
-  const m = /^(.*?)\s*(\([^)]*\))?$/.exec(key);
-  const keys = m[1].split(/\s+\/\s+/).map((k) => `<kbd>${escapeHtml(k)}</kbd>`).join(' / ');
-  return m[2] ? `${keys} ${escapeHtml(m[2])}` : keys;
+  const trimmed = key.trim();
+  const open = trimmed.endsWith(')') ? trimmed.lastIndexOf('(') : -1;
+  const main = open > 0 ? trimmed.slice(0, open).trim() : trimmed;
+  const note = open > 0 ? trimmed.slice(open) : '';
+  const keys = main
+    .split(' / ')
+    .map((k) => `<kbd>${escapeHtml(k.trim())}</kbd>`)
+    .join(' / ');
+  return note ? `${keys} ${escapeHtml(note)}` : keys;
 }
 
 export function renderControls(rows) {
