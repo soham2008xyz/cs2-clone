@@ -65,7 +65,8 @@ export function renderAnalytics(id, gameUrl) {
   return `    <script>
       (function () {
         var n = navigator;
-        if (n.doNotTrack === '1' || window.doNotTrack === '1' || n.globalPrivacyControl === true) return;
+        var dnt = n.doNotTrack != null ? n.doNotTrack : window.doNotTrack != null ? window.doNotTrack : n.msDoNotTrack;
+        if (dnt === '1' || dnt === 'yes' || n.globalPrivacyControl === true) return;
         var s = document.createElement('script');
         s.async = true;
         s.src = 'https://www.googletagmanager.com/gtag/js?id=${id}';

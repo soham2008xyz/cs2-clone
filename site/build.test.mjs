@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { runInNewContext } from 'node:vm';
 import {
   DEFAULT_GA_MEASUREMENT_ID,
   DEFAULT_GAME_URL,
@@ -11,6 +12,7 @@ import {
   build,
   checkUrl,
   parseControls,
+  renderAnalytics,
   renderKey,
   renderPage,
   resolveMeasurementId,
@@ -136,5 +138,50 @@ test('build honours CS2D_GA_MEASUREMENT_ID, including "off"', () => {
     assert.ok(!html.includes('{{ANALYTICS}}'));
   } finally {
     rmSync(outDir, { recursive: true, force: true });
+  }
+});
+
+/** Runs the inline GA snippet against fake browser globals; reports whether GA loaded. */
+function runAnalyticsSnippet(nav, win = {}) {
+  const snippet = renderAnalytics('G-TEST1234', 'https://play.example.com/');
+  const code = snippet.replace(/^\s*<script>/, '').replace(/<\/script>\s*$/, '');
+  const appended = [];
+  const listeners = [];
+  const document = {
+    createElement: (tag) => ({ tag }),
+    head: { appendChild: (el) => appended.push(el) },
+    addEventListener: (type) => listeners.push(type),
+  };
+  const context = { navigator: nav, document, Date, ...win };
+  context.window = context;
+  runInNewContext(code, context);
+  return { appended, listeners, dataLayer: context.dataLayer };
+}
+
+test('analytics snippet honours every opt-out signal the game client honours', () => {
+  const optOuts = [
+    ['navigator.doNotTrack = "1"', { doNotTrack: '1' }, {}],
+    ['navigator.doNotTrack = "yes"', { doNotTrack: 'yes' }, {}],
+    ['window.doNotTrack = "1"', {}, { doNotTrack: '1' }],
+    ['navigator.msDoNotTrack = "1"', { msDoNotTrack: '1' }, {}],
+    ['navigator.globalPrivacyControl = true', { globalPrivacyControl: true }, {}],
+  ];
+  for (const [label, nav, win] of optOuts) {
+    const r = runAnalyticsSnippet(nav, win);
+    assert.equal(r.appended.length, 0, `${label}: no gtag script`);
+    assert.equal(r.dataLayer, undefined, `${label}: no dataLayer`);
+    assert.equal(r.listeners.length, 0, `${label}: no click listener`);
+  }
+});
+
+test('analytics snippet loads GA when no opt-out signal is set', () => {
+  for (const nav of [{}, { doNotTrack: '0' }, { doNotTrack: null, msDoNotTrack: '0' }, { globalPrivacyControl: false }]) {
+    const r = runAnalyticsSnippet(nav);
+    assert.equal(r.appended.length, 1, JSON.stringify(nav));
+    assert.equal(r.appended[0].src, 'https://www.googletagmanager.com/gtag/js?id=G-TEST1234');
+    assert.equal(r.dataLayer.length, 2);
+    assert.equal(r.dataLayer[0][0], 'js');
+    assert.equal(r.dataLayer[1][0], 'config');
+    assert.deepEqual(r.listeners, ['click']);
   }
 });
