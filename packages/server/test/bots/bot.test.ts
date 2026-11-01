@@ -194,3 +194,26 @@ describe('BotController (structural smoke tests)', () => {
     expect(dist(bot.pos, before)).toBeGreaterThan(TILE_SIZE / 2);
   });
 });
+
+describe('BotController corner recovery', () => {
+  beforeEach(() => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.1); // assignedSite 'A'
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('works free of a wall corner it is hugging instead of pushing into it forever', () => {
+    // Mirage A ramp mouth: the bot's body sits a hair above the firebox (tiles
+    // x44-45, y50-51) with its next waypoint < 6px off-axis, so plain steering
+    // presses only LEFT into the box corner. Regression for bots pinned there.
+    const room = new Room('mirage', FAST);
+    const bot = room.addBot('T', 'normal');
+    room.addPlayer(null, 'Human', 'CT'); // stays in CT spawn, out of sight
+    stepUntil(room, () => room.phase === 'freeze'); // spawned, no path yet
+    bot.pos = { x: 46.2 * TILE_SIZE, y: 49.65 * TILE_SIZE };
+    stepUntil(room, () => room.phase === 'live');
+    step(room, 3 * 60);
+    expect(bot.pos.x).toBeLessThan(43 * TILE_SIZE); // made it past the box onto the site
+  });
+});

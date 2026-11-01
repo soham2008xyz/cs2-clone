@@ -38,6 +38,8 @@ const WAYPOINT_RADIUS = 24;
 const REPATH_COOLDOWN = TICK_RATE; // don't repath more than once/sec for the same goal
 const STUCK_CHECK_INTERVAL = TICK_RATE;
 const STUCK_DIST = 10;
+/** Max ticks spent stepping back to the tile center after getting stuck. */
+const UNSTICK_TICKS = TICK_RATE / 2;
 const SAVE_HP = 35; // below this (and with no fight on), back off toward spawn
 const INTEL_TTL_TICKS = 15 * TICK_RATE; // how long a bomb-carrier sighting drives CT rotation
 const THROW_BAND_MIN = 200; // utility throws land ~330px out; only throw from a sane range
@@ -75,12 +77,15 @@ interface TickDecision {
   switchSlot?: number;
 }
 
-/** Walk-toward buttons and facing for heading from `from` to `to`. */
-function steerToward(from: Vec2, to: Vec2): Omit<TickDecision, 'switchSlot'> {
+/**
+ * Walk-toward buttons and facing for heading from `from` to `to`. Axis offsets
+ * within `deadzone` px are ignored so normal travel doesn't zigzag.
+ */
+function steerToward(from: Vec2, to: Vec2, deadzone = 6): Omit<TickDecision, 'switchSlot'> {
   const d = sub(to, from);
   let buttons = 0;
-  if (Math.abs(d.x) > 6) buttons |= d.x > 0 ? BTN.RIGHT : BTN.LEFT;
-  if (Math.abs(d.y) > 6) buttons |= d.y > 0 ? BTN.DOWN : BTN.UP;
+  if (Math.abs(d.x) > deadzone) buttons |= d.x > 0 ? BTN.RIGHT : BTN.LEFT;
+  if (Math.abs(d.y) > deadzone) buttons |= d.y > 0 ? BTN.DOWN : BTN.UP;
   return { buttons, aim: Math.atan2(d.y, d.x) };
 }
 
@@ -119,6 +124,9 @@ export class BotController {
   private lastRepathTick = -Infinity;
   private lastPos: Vec2 = { x: 0, y: 0 };
   private lastStuckCheckTick = 0;
+  /** Tile center to step back to after snagging on a corner, until `unstickUntil`. */
+  private unstick: Vec2 | null = null;
+  private unstickUntil = 0;
   private assignedSite: 'A' | 'B' = 'A';
   private setupRound = -1;
   private boughtRound = -1;
@@ -178,12 +186,22 @@ export class BotController {
     for (const item of decideBotBuys(p.money, p.team, p.hasKit)) room.handleBuy(this.playerId, item);
   }
 
-  /** Drop the current path if we've barely moved since the last check. */
+  /**
+   * Barely moved since the last check: drop the path and step back to the
+   * current tile's center first. A body hugging a wall corner within the
+   * steering deadzone would otherwise repath, press the same key into the
+   * same corner, and stay pinned; a tile center clears every tile edge.
+   */
   private checkStuck(pos: Vec2, tick: number): void {
     if (tick - this.lastStuckCheckTick <= STUCK_CHECK_INTERVAL) return;
     if (this.path.length > 0 && dist(this.lastPos, pos) < STUCK_DIST) {
       this.path = [];
       this.pathIndex = 0;
+      this.unstick = {
+        x: (Math.floor(pos.x / TILE_SIZE) + 0.5) * TILE_SIZE,
+        y: (Math.floor(pos.y / TILE_SIZE) + 0.5) * TILE_SIZE,
+      };
+      this.unstickUntil = tick + UNSTICK_TICKS;
     }
     this.lastPos = { ...pos };
     this.lastStuckCheckTick = tick;
@@ -214,6 +232,10 @@ export class BotController {
     if (toss !== null) return { buttons: BTN.ATTACK, aim: toss, switchSlot: 4 };
 
     const switchSlot = gunSlotIfHoldingNade(p); // back to a gun after throwing
+    if (this.unstick && tick < this.unstickUntil && dist(p.pos, this.unstick) > 1) {
+      return { ...steerToward(p.pos, this.unstick, 1), switchSlot };
+    }
+    this.unstick = null;
     const goalPx = this.computeGoal(room, p, tick);
     if (!goalPx) return { buttons: 0, aim: p.aim, switchSlot };
 
