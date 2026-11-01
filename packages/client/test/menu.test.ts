@@ -9,8 +9,6 @@ class CreateRoomError extends Error {
   }
 }
 vi.mock('../src/net/api.js', () => ({ CreateRoomError, listRooms: (...a: unknown[]) => listRooms(...a), createRoom }));
-const trackMatchStart = vi.fn();
-vi.mock('../src/analytics.js', () => ({ trackMatchStart: (...a: unknown[]) => trackMatchStart(...a) }));
 
 const { initMenu, resumeMenu } = await import('../src/menu.js');
 
@@ -19,7 +17,6 @@ const IDS = ['menu-name', 'menu-difficulty', 'menu-map', 'menu-backfill', 'menu-
 beforeEach(() => {
   vi.useFakeTimers();
   createRoom.mockReset();
-  trackMatchStart.mockReset();
   listRooms.mockReset().mockResolvedValue({ rooms: [] });
   document.body.innerHTML =
     IDS.map((id) => `<input id="${id}" />`).join('') +
@@ -132,8 +129,7 @@ describe('menu entry points', () => {
     expect(onStart).toHaveBeenCalledTimes(1);
     const { session } = await import('../src/session.js');
     expect(session).toMatchObject({ name: 'Ann', roomCode: 'QUIK', map: 'dust2', botsRequested: { perTeam: 5, difficulty: 'hard' } });
-    // analytics gets the entry method, map and mode, never the name or room code
-    expect(trackMatchStart).toHaveBeenCalledWith('quick_match', 'dust2', 'bots');
+    expect(session.entry).toBe('quick_match'); // reported by GameScene once the server admits us
   });
 
   it('quick play falls back to a generic message for non-capacity failures', async () => {
@@ -156,7 +152,8 @@ describe('menu entry points', () => {
     await flush();
     expect(createRoom).toHaveBeenCalledWith('testarena', true, '');
     expect(onStart).toHaveBeenCalled();
-    expect(trackMatchStart).toHaveBeenCalledWith('create_room', 'testarena', 'online');
+    const { session } = await import('../src/session.js');
+    expect(session.entry).toBe('create_room');
   });
 
   it('refuses to join without a room code', () => {
@@ -181,7 +178,7 @@ describe('menu entry points', () => {
     expect(onStart).toHaveBeenCalledTimes(1);
     const { session } = await import('../src/session.js');
     expect(session).toMatchObject({ roomCode: 'ABCD', map: 'testarena' });
-    expect(trackMatchStart).toHaveBeenCalledWith('join_code', 'testarena', 'online');
+    expect(session.entry).toBe('join_code');
   });
 
   it('names an anonymous player', () => {

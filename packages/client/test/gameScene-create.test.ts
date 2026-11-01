@@ -9,6 +9,7 @@ vi.mock('../src/audio/sfx.js', () => ({ sfx: vi.fn() }));
 vi.mock('../src/audio/synth.js', () => ({ toggleMute: vi.fn(), unlockAudio: vi.fn() }));
 vi.mock('../src/render/mapRender.js', () => ({ renderMap: vi.fn() }));
 vi.mock('../src/chat.js', () => ({ appendChatLine: vi.fn(), initChat: vi.fn() }));
+vi.mock('../src/analytics.js', () => ({ trackMatchStart: vi.fn(), trackMatchEnd: vi.fn() }));
 vi.mock('../src/scenes/BootScene.js', () => ({ playerTexture: (_s: unknown, team: string) => `player_${team}` }));
 
 const { GameScene } = await import('../src/scenes/GameScene.js');
@@ -17,6 +18,7 @@ const { toggleMute, unlockAudio } = await import('../src/audio/synth.js');
 const { renderMap } = await import('../src/render/mapRender.js');
 const { appendChatLine, initChat } = await import('../src/chat.js');
 const { session } = await import('../src/session.js');
+const { trackMatchStart } = await import('../src/analytics.js');
 
 interface Conn {
   send: Mock;
@@ -78,7 +80,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.stubGlobal('window', {});
   vi.stubGlobal('location', { port: '', hostname: 'h', protocol: 'http:', host: 'h' });
-  Object.assign(session, { name: 'Me', roomCode: 'ABCD', map: 'testarena', team: 'T', botsRequested: undefined });
+  Object.assign(session, { name: 'Me', roomCode: 'ABCD', map: 'testarena', team: 'T', botsRequested: undefined, entry: undefined });
 
   s = new GameScene() as unknown as Scene;
   const factory = fakeFactory();
@@ -289,6 +291,27 @@ describe('GameScene.create — welcome', () => {
     expect(s.conn.disconnect).toHaveBeenCalled();
     expect(s.game.events.payloads('session:restart')).toHaveLength(1);
     expect(s.myId).not.toBe(9);
+  });
+
+  it('reports match_start only once admitted, with the confirmed map, and only once per menu entry', () => {
+    vi.mocked(trackMatchStart).mockClear();
+    session.entry = 'join_code';
+    s.create();
+    s.conn.onWelcome({ t: 'welcome', id: 9, map: 'dust2', tick: 0 }); // wrong map guess: restart, not admitted yet
+    expect(trackMatchStart).not.toHaveBeenCalled();
+    s.create();
+    s.conn.onWelcome({ t: 'welcome', id: 9, map: 'dust2', tick: 0 });
+    expect(trackMatchStart).toHaveBeenCalledExactlyOnceWith('join_code', 'dust2', 'online');
+    expect(session.entry).toBeUndefined();
+    s.conn.onWelcome({ t: 'welcome', id: 9, map: 'dust2', tick: 0 });
+    expect(trackMatchStart).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not report a start when the player never left the menu for it', () => {
+    vi.mocked(trackMatchStart).mockClear();
+    s.create();
+    s.conn.onWelcome({ t: 'welcome', id: 9, map: 'testarena', tick: 0 });
+    expect(trackMatchStart).not.toHaveBeenCalled();
   });
 });
 

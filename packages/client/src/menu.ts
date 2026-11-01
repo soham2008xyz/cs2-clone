@@ -1,7 +1,7 @@
 import { MAX_PLAYERS_PER_ROOM } from '@cs2d/shared';
 import { CreateRoomError, createRoom, listRooms, type RoomListing } from './net/api.js';
 import { session } from './session.js';
-import { trackMatchStart, type MatchStartMethod } from './analytics.js';
+import type { MatchStartMethod } from './analytics.js';
 
 const ROOM_LIST_REFRESH_MS = 3000;
 
@@ -75,11 +75,11 @@ export function initMenu(onStart: () => void): void {
   };
 
   const enterRoom = (method: MatchStartMethod, code: string, map: string, botsRequested?: typeof session.botsRequested) => {
-    trackMatchStart(method, map, botsRequested ? 'bots' : 'online');
     session.name = playerName();
     session.roomCode = code;
     session.map = map;
     session.botsRequested = botsRequested;
+    session.entry = method;
     if (refreshTimer) clearInterval(refreshTimer);
     onStart();
   };
