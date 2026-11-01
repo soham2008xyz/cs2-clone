@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { TILE_SIZE } from '../src/constants.js';
-import { getMap } from '../src/map/registry.js';
+import { getMap, listMaps } from '../src/map/registry.js';
 import type { CompiledMap } from '../src/map/types.js';
 
 /** BFS over walkable tiles from a starting px position; returns visited set. */
@@ -101,6 +101,77 @@ describe('dust2', () => {
     expect(map.siteAt(map.siteCenters.A!.x, map.siteCenters.A!.y)).toBe('A');
     expect(map.siteAt(map.siteCenters.B!.x, map.siteCenters.B!.y)).toBe('B');
     expect(map.siteAt(map.spawns.T[0].x, map.spawns.T[0].y)).toBeNull();
+  });
+});
+
+describe('mirage', () => {
+  const map = getMap('mirage');
+
+  it('is registered and selectable', () => {
+    expect(listMaps()).toContain('mirage');
+    expect(map.def.displayName).toBe('Mirage');
+  });
+
+  it('compiles with equal-width rows and border walls', () => {
+    expect(map.width).toBe(88);
+    expect(map.height).toBe(62);
+    for (let tx = 0; tx < map.width; tx++) {
+      expect(map.isSolid(tx, 0)).toBe(true);
+      expect(map.isSolid(tx, map.height - 1)).toBe(true);
+    }
+    for (let ty = 0; ty < map.height; ty++) {
+      expect(map.isSolid(0, ty)).toBe(true);
+      expect(map.isSolid(map.width - 1, ty)).toBe(true);
+    }
+  });
+
+  it('has 10 spawns per team on walkable tiles', () => {
+    expect(map.spawns.T).toHaveLength(10);
+    expect(map.spawns.CT).toHaveLength(10);
+    for (const s of [...map.spawns.T, ...map.spawns.CT]) {
+      expect(map.isSolidAt(s.x, s.y)).toBe(false);
+    }
+  });
+
+  it('buy zones cover each spawn for the right team only', () => {
+    for (const s of map.spawns.T) expect(map.buyzoneAt(s.x, s.y)).toBe('T');
+    for (const s of map.spawns.CT) expect(map.buyzoneAt(s.x, s.y)).toBe('CT');
+    expect(map.buyzoneAt(40.5 * TILE_SIZE, 30.5 * TILE_SIZE)).toBeNull(); // mid
+  });
+
+  it('has both bombsites with walkable centers', () => {
+    expect(map.siteAt(map.siteCenters.A!.x, map.siteCenters.A!.y)).toBe('A');
+    expect(map.siteAt(map.siteCenters.B!.x, map.siteCenters.B!.y)).toBe('B');
+    expect(map.siteAt(map.spawns.T[0].x, map.spawns.T[0].y)).toBeNull();
+  });
+
+  it('connects T spawn to CT spawn, both sites, every callout and utility spot', () => {
+    const tSpawn = map.spawns.T[0];
+    const reach = flood(map, tSpawn.x, tSpawn.y);
+    const mustReach: Array<[string, number, number]> = [
+      ['CT spawn', map.spawns.CT[0].x, map.spawns.CT[0].y],
+      ['A site', map.siteCenters.A!.x, map.siteCenters.A!.y],
+      ['B site', map.siteCenters.B!.x, map.siteCenters.B!.y],
+    ];
+    for (const c of map.def.callouts) {
+      mustReach.push([c.name, (c.tx + 0.5) * TILE_SIZE, (c.ty + 0.5) * TILE_SIZE]);
+    }
+    for (const u of map.utilitySpots) mustReach.push([`${u.kind} ${u.site}`, u.pos.x, u.pos.y]);
+    for (const [name, x, y] of mustReach) {
+      expect(map.isSolidAt(x, y), `${name} should be walkable`).toBe(false);
+      expect(reach.has(tileIndexAt(map, x, y)), `${name} should be reachable from T spawn`).toBe(true);
+    }
+  });
+
+  it('pinches are the only route through their walls', () => {
+    // palace door: gap at (55,55) between walls above and below
+    expect(map.isSolid(55, 54)).toBe(true);
+    expect(map.isSolid(55, 55)).toBe(false);
+    expect(map.isSolid(55, 56)).toBe(true);
+    // window: one-tile-tall gap from window room into mid
+    expect(map.isSolid(24, 29)).toBe(true);
+    expect(map.isSolid(24, 30)).toBe(false);
+    expect(map.isSolid(24, 31)).toBe(true);
   });
 });
 
