@@ -216,4 +216,14 @@ describe('BotController corner recovery', () => {
     step(room, 3 * 60);
     expect(bot.pos.x).toBeLessThan(43 * TILE_SIZE); // made it past the box onto the site
   });
+
+  it('does not mistake standing still to plant for being stuck', () => {
+    // a multi-second plant outlasts the 1s stuck check; the bot ends its path a
+    // tile short of the site center, so its (consumed) path is still nonempty
+    const room = new Room(botTestMap(), { ...FAST, round: 100, plant: 3 });
+    room.addBot('T', 'normal');
+    room.addPlayer(null, 'Human', 'CT');
+    stepUntil(room, () => room.phase === 'planted', 60 * 30);
+    expect(room.phase).toBe('planted');
+  });
 });

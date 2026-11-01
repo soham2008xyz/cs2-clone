@@ -194,7 +194,10 @@ export class BotController {
    */
   private checkStuck(pos: Vec2, tick: number): void {
     if (tick - this.lastStuckCheckTick <= STUCK_CHECK_INTERVAL) return;
-    if (this.path.length > 0 && dist(this.lastPos, pos) < STUCK_DIST) {
+    // only while a waypoint is still ahead: standing at the path's end to plant
+    // or defuse is deliberate, and stepping off would reset that progress
+    const moving = this.pathIndex < this.path.length;
+    if (moving && dist(this.lastPos, pos) < STUCK_DIST) {
       this.path = [];
       this.pathIndex = 0;
       this.unstick = {
