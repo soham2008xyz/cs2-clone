@@ -1,6 +1,7 @@
 import { MAX_PLAYERS_PER_ROOM } from '@cs2d/shared';
 import { CreateRoomError, createRoom, listRooms, type RoomListing } from './net/api.js';
 import { session } from './session.js';
+import { trackMatchStart, type MatchStartMethod } from './analytics.js';
 
 const ROOM_LIST_REFRESH_MS = 3000;
 
@@ -73,7 +74,8 @@ export function initMenu(onStart: () => void): void {
       .catch(() => showError('cannot reach server — start it with: npm run dev:server'));
   };
 
-  const enterRoom = (code: string, map: string, botsRequested?: typeof session.botsRequested) => {
+  const enterRoom = (method: MatchStartMethod, code: string, map: string, botsRequested?: typeof session.botsRequested) => {
+    trackMatchStart(method, map, botsRequested ? 'bots' : 'online');
     session.name = playerName();
     session.roomCode = code;
     session.map = map;
@@ -89,12 +91,12 @@ export function initMenu(onStart: () => void): void {
     refreshTimer = setInterval(refreshRooms, ROOM_LIST_REFRESH_MS);
   };
 
-  const join = (code: string, map?: string) => {
+  const join = (code: string, map?: string, method: MatchStartMethod = 'join_list') => {
     showError('');
     const normalized = code.toUpperCase();
     // the server's welcome message corrects any wrong guess (session:restart)
     const roomMap = map ?? knownRooms.find((r) => r.code === normalized)?.map ?? 'dust2';
-    enterRoom(normalized, roomMap);
+    enterRoom(method, normalized, roomMap);
   };
 
   const selectedDifficulty = (): 'easy' | 'normal' | 'hard' => el<HTMLSelectElement>('menu-difficulty').value as 'easy' | 'normal' | 'hard';
@@ -104,7 +106,7 @@ export function initMenu(onStart: () => void): void {
     try {
       const difficulty = selectedDifficulty();
       const { code, map } = await createRoom('dust2', true, difficulty);
-      enterRoom(code, map, { perTeam: 5, difficulty });
+      enterRoom('quick_match', code, map, { perTeam: 5, difficulty });
     } catch (err) {
       showError(createFailureMessage(err, 'could not create a match — is the server running?'));
     }
@@ -116,7 +118,7 @@ export function initMenu(onStart: () => void): void {
       const map = el<HTMLSelectElement>('menu-map').value;
       const backfillBots = el<HTMLInputElement>('menu-backfill').checked;
       const { code, map: confirmedMap } = await createRoom(map, backfillBots, selectedDifficulty());
-      enterRoom(code, confirmedMap);
+      enterRoom('create_room', code, confirmedMap);
     } catch (err) {
       showError(createFailureMessage(err, 'could not create a room — is the server running?'));
     }
@@ -128,7 +130,7 @@ export function initMenu(onStart: () => void): void {
       showError('enter a room code');
       return;
     }
-    join(code);
+    join(code, undefined, 'join_code');
   };
   el<HTMLInputElement>('menu-join-code').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') el<HTMLButtonElement>('menu-join').click();
