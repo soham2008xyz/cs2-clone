@@ -23,6 +23,8 @@
 
 ## Build, CI, deploy quirks
 - CI (`.github/workflows/test.yml`, Node 24): `npm ci --ignore-scripts` (esbuild postinstall skipped intentionally), runs `test:coverage`, `typecheck` (all packages, tests included), `test:integration`, builds server then client. SonarCloud scan runs only if `SONAR_TOKEN` is set (PRs from forks skip).
+- CI also runs `test:site` and `build:site` (the static landing page in `site/`, plain Node, no deps).
+- Landing page (`.github/workflows/pages.yml`): pushes to `main` touching `site/**` or `README.md` deploy `site/dist` to GitHub Pages. The controls table is generated from README's `## Controls` table, and the build fails if that table disappears.
 - Render (`render.yaml`, free tier): `buildCommand` is `npm ci --include=dev && npm run build` (different from CI install), `startCommand: npm start`, `healthCheckPath: /rooms`, auto-deploy on `main`. Free sleeps after 15m idle (first request after idle can be slow).
 - Single-server prod: server must be able to serve files from `packages/client/dist/` (built client). In dev, run server and Vite client separately.
 - Coverage reports consumed by Sonar: `packages/*/coverage/lcov.info`. Sonar excludes `**/test/**`, `scripts/**`, `**/vite.config.ts`, `**/vitest.config.ts`.

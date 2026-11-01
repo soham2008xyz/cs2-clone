@@ -13,6 +13,9 @@ economy, utility, bots, and online multiplayer. Built with Phaser 3 + Vite
 (client), Node.js + ws (server), and a shared pure-TypeScript simulation
 package used by both.
 
+**Play:** <https://cs2d.sohambanerjee.me/> · **Landing page:**
+<https://soham2008xyz.github.io/cs2-clone/>
+
 ## Running locally
 
 ```bash
@@ -48,6 +51,20 @@ traffic, so the *first* request after a long idle period can take up to
 about a minute to wake up. Once a room has active players, ongoing
 WebSocket traffic keeps it awake — the slow case is specifically the
 first connection after idle, not mid-game.
+
+### Landing page
+
+The marketing page lives in `site/` and is plain HTML/CSS, separate from the
+game client. `npm run build:site` writes it to `site/dist/` and fills in the
+controls table from the **Controls** section below, so edit controls here,
+not in `site/`. `npm run test:site` checks the build.
+
+The `Landing Page` workflow (`.github/workflows/pages.yml`) publishes it to
+GitHub Pages at <https://soham2008xyz.github.io/cs2-clone/> on every push to
+`main` that touches `site/` or this README. It needs a one-time setting:
+**Settings → Pages → Source: GitHub Actions**. "Play now" points at
+<https://cs2d.sohambanerjee.me/>; set the `CS2D_GAME_URL` repository variable
+to point it somewhere else.
 
 ### Server limits
 
@@ -90,6 +107,7 @@ kevlar) makes that armor absorb 15% more, and CTs can buy a **Defuse Kit**
 npm test                              # shared + server unit tests
 node scripts/integration-round.mjs    # 2-client round/economy/utility e2e test
 node scripts/integration-bots.mjs     # 5v5 bot-vs-bot autonomous play test
+npm run test:site                     # landing page build
 ```
 
 ## Architecture
